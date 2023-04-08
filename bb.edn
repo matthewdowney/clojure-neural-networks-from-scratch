@@ -1,0 +1,7 @@
+{:tasks
+ {test
+  {:docs "Run unit tests."
+   :extra-deps {io.github.matthewdowney/rich-comment-tests
+                {:git/tag "v1.0.2" :git/sha "4501366"}}
+   :requires ([com.mjdowney.rich-comment-tests.test-runner :as rct])
+   :task (rct/run-tests-in-file-tree! {:dirs #{"src"}})}}}

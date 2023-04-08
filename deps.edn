@@ -1,0 +1,7 @@
+{:paths ["src"]
+ :deps  {org.clojure/clojure {:mvn/version "1.11.1"}
+         com.taoensso/timbre {:mvn/version "6.0.2"} ; logging
+         com.taoensso/tufte  {:mvn/version "2.4.5"} ; profiling
+
+         ; literate testing
+         io.github.matthewdowney/rich-comment-tests {:git/tag "v1.0.2" :git/sha "4501366"}}}

@@ -190,15 +190,15 @@
         [∇b ∇w]
         (reduce
           (fn [[bg wg d] idx]
-            (let [delta (dot (t (weights (+ (- idx) 1))) d)
-                  avs (if (< idx (count layers))
-                        (activations (- (- idx) 1))
+            (let [delta (dot (t (weights (- idx))) d)
+                  avs (if (< idx (dec (count layers)))
+                        (activations (- (+ idx 2)))
                         [inputs])
                   weight (dot delta (t avs))]
               [(cons delta bg) (cons weight wg) delta]))
           [bias-gradient weight-gradient deltas]
           ; plus one bc of the input layers
-          (range 2 (inc (count layers))))]
+          (range 1 (count layers)))]
     {:∇b ∇b :∇w ∇w :network network :diff (ffirst deltas)}))
 
 (defn train [network samples η]
@@ -254,6 +254,10 @@
 
 ^:rct/test
 (comment
+  (compute-network trained [49 49.05])
+  (let [[x y] [49 49.05]]
+    (Math/sqrt (+ (* x x) (* y y))))
+
   (let [[x y :as input] [40 50]]
     [(-> (compute-network trained input) :layers peek peek :activation)
      (Math/sqrt (+ (* x x) (* y y)))])

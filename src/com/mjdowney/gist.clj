@@ -177,6 +177,152 @@
 (-> (compute-network network' [3 4]) :layers peek peek :activation)
 ;=> 19.442854771638164
 
+; Each neuron changes its own weights, but only *contributes* to desired bias
+; changes in the previous layer (its desired bias change is summed with the
+; suggestions from other neurons at the same layer).
+
+; Each subsequent layer treats the final desired bias change as its own input.
+; (Maybe it's better called 'activation error' or something?)
+(defn nbackprop
+  "Take a `neuron` (complete with :error field: real minus desired activation),
+  and the previous layer of input neurons (shaped [neuron]).
+
+  Return a neuron with :weight-gradient and :bias-gradient keys."
+  [{:keys [error] :as neuron} previous-layer]
+  (assoc neuron
+    ; The desired change to the previous layer's biases is given by the weights
+    ; of this neuron, proportional to its activation error. This is just *this*
+    ; neuron's vote. Its peer neurons also vote for how to define the previous
+    ; layer's error; opinions from neurons experiencing the higher error are
+    ; weighted more heavily.
+    :bias-gradient (vec
+                     (for [weight (:weights neuron)]
+                       (* error weight)))
+
+    ; The desired change to this neuron's weights is in proportion to the
+    ; activation of the previous layer, proportional to the error. Importantly,
+    ; this changes the proportions between the weights, even though the error
+    ; is constant, because the activation of the previous layer is (probably)
+    ; not constant.
+    :weight-gradient (vec
+                       (for [prev-neuron previous-layer]
+                         (* error (:activation prev-neuron))))))
+
+(comment
+  (dissoc (backprop network [3.0 4.0] [5.0]) :network :diff)
+
+
+  (defn backprop1 [error layer previous-layer]
+    (let [layer (mapv (fn [e n] (nbackprop e n previous-layer)) error layer)
+          ; If the neurons in the previous layer are [n0, n1, ..n], then
+          ; this shape is [[n0', n1', ..n'], [n0'', n1'', ..n''], ...], with
+          ; each top level vector representing the contribution for each neuron
+          ; in *this* layer to deciding the error for the previous layer.
+          next-error (map :bias-gradient layer)
+          ; So sum each of the columns to get the error for each individual
+          ; neuron in the previous layer: [(+ n0' n0'' ...) etc].
+          next-error (apply map + #p next-error)]
+      next-error))
+
+  (defn backprop2 [network inputs desired]
+    (let [network (compute-network network inputs)
+          layers (:layers network)
+          output-neuron (last (last layers))
+          error (- (:activation output-neuron) (first desired))
+          next-error (backprop1 [error] (last layers) (last (butlast layers)))]
+      (backprop1 next-error (last (butlast layers)) (last (butlast (butlast layers))))))
+
+  (let [[output-neuron] (? layers -1)
+        error (- (:activation output-neuron) 5.0)]
+    (backprop1 [error] (? layers -1) (? layers -2)))
+
+
+  (def bp1
+    ; As inputs, we have some neuron and the error for its activation
+    (let [[output-neuron] (? layers -1)
+          error (- (:activation output-neuron) 5.0)]
+
+      [(for [weight (:weights output-neuron)]
+         (* error weight))
+
+       (let [prev-layer (? layers -2)]
+         (for [prev-neuron prev-layer]
+           (* error (:activation prev-neuron))))]))
+
+  ; Again, as inputs, we have some neuron and the error for its activation
+  (let [penultimate-layer (? layers -2)]
+    (for [[penultimate-neuron error] (map vector
+                                       penultimate-layer
+                                       (first bp1))]
+      ; The desired change to the previous layer's biases is given by the weights
+      ; of this neuron, proportional to its activation error.
+      [(for [weight (:weights penultimate-neuron)]
+         (* error weight))
+
+       ; The desired change to this neuron's weights is in proportion to the
+       ; activation of the previous layer, proportional to the error.
+       (let [prev-layer (? layers -3)]
+         (for [prev-neuron prev-layer]
+           (* error (:activation prev-neuron))))]))
+
+  (map second *1)
+  (map #(reduce + 0 %) *1)
+
+  )
+
+(comment
+  [(backprop1 network [3.0 4.0] [5.0])
+   (dissoc (backprop network [3.0 4.0] [5.0]) :network :diff)]
+  )
+
+(defn backprop1 [network inputs expected]
+  ; Feed forward
+  (let [{:keys [layers] :as network} (compute-network network inputs)
+
+        ; Set the :error in each neuron in the output layer to the
+        ; difference between the realized and expected activation.
+        layers (update layers (dec (count layers))
+                 (fn [neurons]
+                   (mapv
+                     (fn [n expected]
+                       (assoc n :error (- (:activation n) expected)))
+                     neurons
+                     expected)))]
+    ; Work backwards through the layers
+    (loop [idx (dec (count layers))
+           layers layers]
+      (if (>= idx 0)
+        (let [layer (nth layers idx)
+
+              ; In the last iteration, the previous layer is the inputs
+              prv (if (zero? idx)
+                    #p (mapv (fn [a] {:activation a}) inputs)
+                    (nth layers (dec idx)))
+
+              ; Compute the weight and bias gradients from the layer
+              layer (mapv (fn [n] (nbackprop n prv)) layer)
+              layers (assoc layers idx layer)
+
+              ; If the neurons in the previous layer are [n0, n1, ..n], then
+              ; this shape is [[n0', n1', ..n'], [n0'', n1'', ..n''], ...], with
+              ; each top level vector representing the contribution for each neuron
+              ; in *this* layer to deciding the error for the previous layer.
+              next-error (map :bias-gradient layer)
+
+              ; So sum each of the columns to get the error for each individual
+              ; neuron in the previous layer: [(+ n0' n0'' ...) etc].
+              next-error (apply map + #p next-error)]
+          (recur
+            (dec idx)
+            (if (zero? idx)
+              layers
+              (update layers (dec idx)
+                (fn [neurons]
+                  (mapv (fn [n error] (assoc n :error error))
+                    neurons next-error))))))
+        {:w (mapv #(mapv :weight-gradient %) layers)
+         :b (mapv #(mapv :error %) layers)}))))
+
 ;;;
 
 (defn backprop [network inputs expected]
@@ -300,18 +446,18 @@
   (-> (compute-network nn [3 4]) :layers peek peek :activation)
   ;=> 0.711451179800545
 
-  (def expected-gradient-vectors
-    {:∇b [[[-13.320990808641826] [-0.0531463596480507] [-9.090103139068606]]
-          [[-5.276161644216386] [-5.156464687149098] [1.661069976942607] [1.296440101855551]]
-          [[-4.2885488201994555]]],
-     :∇w [[[-39.96297242592548] [-0.1594390789441521] [-27.27030941720582]]
-          [[-0.0 -0.0 -2.034942998951652]
-           [-0.0 -0.0 -1.9887775284439588]
-           [0.0 0.0 0.6406518503945805]
-           [0.0 0.0 0.5000191212342855]]
-          [[-0.5974954256335997 -4.333898954159115 -0.0 -6.666037594022326]]]})
-
   ; Expected gradient vectors for one round of backprop
-  (dissoc (backprop nn [3 4] [5]) :network :diff)
-  ;=>> expected-gradient-vectors
+  (dissoc (backprop1 nn [3 4] [5]) :network :diff)
+  ;=>>
+  {:b [[-13.320990808641826 -0.0531463596480507 -9.090103139068606]
+       [-5.276161644216386 -5.156464687149098 1.661069976942607 1.296440101855551]
+       [-4.2885488201994555]],
+   :w [[[-39.96297242592548 -53.2839632345673]
+         [-0.1594390789441521 -0.2125854385922028]
+         [-27.27030941720582 -36.360412556274426]]
+        [[-0.0 -0.0 -2.034942998951652]
+         [-0.0 -0.0 -1.9887775284439588]
+         [0.0 0.0 0.6406518503945805]
+         [0.0 0.0 0.5000191212342855]]
+        [[-0.5974954256335997 -4.333898954159115 -0.0 -6.666037594022326]]]}
   )

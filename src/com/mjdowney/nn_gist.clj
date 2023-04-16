@@ -63,6 +63,10 @@
 (defn relu  [z] (max z 0))
 (defn relu' [z] (if (pos? z) 1 0))
 
+; The hyperbolic tangent activation function and its derivative
+(defn tanh  [z] (Math/tanh z))
+(defn tanh' [z] (- 1 (Math/pow (Math/tanh z) 2)))
+
 (defn network
   "Create a network with (deterministically) randomized weights and biases.
 
@@ -105,6 +109,11 @@
           (mapv :a layer)
           (assoc network idx layer)))
       network)))
+
+(defn activation
+  "Return the activation of the final layer in the network."
+  [network]
+  (mapv :a (peek network)))
 
 ; For backprop, I'll use :bg and :wg for bias gradient and weight gradient
 ; (typically these are written ∇b and ∇w, or nabla-b and nabla-w). I'm favoring
@@ -182,6 +191,51 @@
         {:bg (vec (rest error))
          :wg (mapv (partial mapv :wg) network)}))))
 
+; Helper for element-wise matrix operations
+(defn matrix-op [f a b]
+  (if (vector? a)
+    (mapv #(matrix-op f %1 %2) a b)
+    (f a b)))
+
+(comment ; e.g.
+  (matrix-op + [[1] [2 3]] [[3] [4 5]]) ;=> [[4] [6 8]]
+  )
+
+(defn backprop-batch
+  "Do backprop with a whole batch of `training-data` at once, and return
+  combined weight and bias gradients."
+  [network afs afs' training-data]
+  (transduce
+    ; Do backprop on each training example in the batch
+    (map
+      (fn [{:keys [inputs outputs]}]
+        (backprop network inputs outputs afs afs')))
+    ; Sum together all the weight and bias gradients in the batch
+    (completing
+      (fn [[wg bg] backprop-results]
+        (if-not wg
+          ((juxt :wg :bg) backprop-results)
+          [(matrix-op + wg (:wg backprop-results))
+           (matrix-op + bg (:bg backprop-results))])))
+    nil
+    training-data))
+
+(defn train
+  "Train the `network` on the batch of `training-data`, returning a network
+  with updated weights and biases.
+
+  The `training-data` is shaped [{:inputs [x] :outputs [y]} ...]."
+  [network afs afs' training-data learning-rate]
+  (let [[wg bg] (backprop-batch network afs afs' training-data)
+        coef (/ learning-rate (count training-data))]
+    (vec
+      (for [[layer wg bg] (map vector network wg bg)]
+        (vec
+          (for [[{:keys [w b] :as neuron} wg bg] (map vector layer wg bg)]
+            (let [weights (mapv (fn [w wg] (- w (* wg coef))) w wg)
+                  bias (- b (* bg coef))]
+              (assoc neuron :w weights :b bias))))))))
+
 ^:rct/test
 (comment
   ; Test that feedforward and backprop match Python library sample
@@ -250,4 +304,89 @@
          [0.0069936629654559785 0.0021239378116470666 0.04708373505242684]
          [0.00348442885599166 0.0010582022948188068 0.023458368793990856]]
         [[-0.4748052863127182 -0.6525277264159819 -0.3763548135364772 -0.6604340885279468]]]}
+
+  (def training-data
+    [{:inputs [3 4] :outputs [5]}
+     {:inputs [4 5] :outputs [6]}
+     {:inputs [5 6] :outputs [7]}])
+
+  ; The weight and bias updates are the same after 1000 batches of training as
+  ; in the Python version
+  (reduce
+    (fn [nn td]
+      (train nn (fns sigmoid) (fns sigmoid') td 0.001))
+    nn
+    (repeat 1000 training-data))
+  ;=>>
+  [[{:w [0.42990755526687285 -0.7074824450899123], :b 0.1738170096432151}
+    {:w [-2.5556609160978114 0.6501218304459673], :b 1.4534478365437804}
+    {:w [0.9951770978037526 -0.5788488977828417], :b 0.7936129544134036}]
+   [{:w [2.2849577686829683 -1.4529221333741635 0.17692620896266537], :b 0.2896804960563322}
+    {:w [-0.17831988032714072 1.5336579052709052 1.5452033216566965], :b 0.5415332672690717}
+    {:w [0.15201595703752568 0.37785523163584306 -0.9144365699181696], :b 0.29871588626034246}
+    {:w [-1.9811838175395835 -0.3479784850885607 0.15137788018024356], :b 1.4868532932245218}]
+   [{:w [1.5501161477687693 1.637175464757474 -0.17588049984672005 0.1149529758537042], :b 0.31271354155253683}]]
+
+  )
+
+(defn mse-cost [expected-outputs actual-outputs]
+  (transduce
+    (map (fn [[e a]] (Math/pow (- e a) 2.0)))
+    (fn
+      ([sum x] (+ sum x))
+      ([sum] (/ (Math/sqrt sum) (* (count expected-outputs) 2))))
+    0.0
+    (map vector expected-outputs actual-outputs)))
+
+(comment
+  (def nn (network [2 128 1]))
+
+  (def training-data
+    (let [r (Random. 0)
+          d (->> (repeatedly
+                   (fn []
+                     (let [x (* (.nextDouble r) 100)
+                           y (* (.nextDouble r) 100)]
+                       {:inputs [x y]
+                        :outputs [(Math/sqrt (+ (* x x) (* y y)))]})))
+                 (partition 10)
+                 (map vec))]
+      ; One sample of 100 to evaluate the performance on, not included in the
+      ; training sample
+      {:test (vec (mapcat identity (take 10 d)))
+       ; Infinite batches of 10 samples to train on
+       :training (drop 10 d)}))
+
+  (let [f relu
+        f' relu']
+    (def afs [f identity])
+    (def afs' [f' (constantly 1)]))
+
+  (defn evaluate [nn]
+    (transduce
+      (map
+        (fn [{:keys [inputs outputs]}]
+          (mse-cost outputs (activation (feedforward nn inputs afs)))))
+      +
+      0.0
+      (:test training-data)))
+
+  (evaluate nn)
+  ;=> 3905.9684062065153
+
+  (def trained
+    (loop [nn nn
+           batches (:training training-data)
+           i 0]
+      (if (< i 5000)
+        (let [batch (first batches)
+              nn (train nn afs afs' batch 0.00001)]
+          (when (zero? (mod (inc i) 100))
+            (println "Epoch" i "cost:" (evaluate nn)))
+          (recur nn (rest batches) (inc i)))
+        nn)))
+
+  (feedforward n' [25 25] afs)
+  (Math/sqrt (* 25 25 2))
+
   )

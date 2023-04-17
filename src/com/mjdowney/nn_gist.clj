@@ -1,5 +1,10 @@
+;; TODO: Update network construction to include activation functions
+;; TODO: Create a separate ns for the MNIST data set and see if this is fast
+;;       enough to get reasonably close
 (ns com.mjdowney.nn-gist
   (:import (java.util Random)))
+
+(set! *warn-on-reflection* true)
 
 ;;; I. Neurons
 ;;; ===
@@ -338,25 +343,23 @@
     0.0
     (map vector expected-outputs actual-outputs)))
 
+(def training-data
+  (let [r (Random. 0)
+        d (->> (repeatedly
+                 (fn []
+                   (let [x (.nextInt r 100)
+                         y (.nextInt r 100)]
+                     {:inputs [x y]
+                      :outputs [(Math/sqrt (+ (* x x) (* y y)))]})))
+               (partition 10)
+               (map vec))]
+    ; One sample of 100 to evaluate the performance on, not included in the
+    ; training sample
+    {:test (vec (mapcat identity (take 10 d)))
+     ; Infinite batches of 10 samples to train on
+     :training (drop 10 d)}))
+
 (comment
-  (def nn (network [2 128 1]))
-
-  (def training-data
-    (let [r (Random. 0)
-          d (->> (repeatedly
-                   (fn []
-                     (let [x (* (.nextDouble r) 100)
-                           y (* (.nextDouble r) 100)]
-                       {:inputs [x y]
-                        :outputs [(Math/sqrt (+ (* x x) (* y y)))]})))
-                 (partition 10)
-                 (map vec))]
-      ; One sample of 100 to evaluate the performance on, not included in the
-      ; training sample
-      {:test (vec (mapcat identity (take 10 d)))
-       ; Infinite batches of 10 samples to train on
-       :training (drop 10 d)}))
-
   (let [f relu
         f' relu']
     (def afs [f identity])
@@ -371,22 +374,51 @@
       0.0
       (:test training-data)))
 
-  (evaluate nn)
-  ;=> 3905.9684062065153
-
   (def trained
-    (loop [nn nn
-           batches (:training training-data)
-           i 0]
-      (if (< i 5000)
-        (let [batch (first batches)
-              nn (train nn afs afs' batch 0.00001)]
-          (when (zero? (mod (inc i) 100))
-            (println "Epoch" i "cost:" (evaluate nn)))
-          (recur nn (rest batches) (inc i)))
-        nn)))
+    (let [eta 4e-5
+          s 6]
+      (println "* * *")
+      (println "ETA" eta "Size" s)
+      (println "* * *")
+      (loop [nn (network [2 s 1])
+             batches (:training training-data)
+             cs []
+             i 0]
+        (if (and (< i 100000) (not (.isInterrupted (Thread/currentThread))))
+          (let [batch (first batches)
+                nn (train nn afs afs' batch eta)]
+            (if (zero? (mod (inc i) 1000))
+              (let [c (evaluate nn)]
+                (println "Epoch" i "cost:" c)
+                (recur nn (rest batches) (conj cs c) (inc i)))
+              (recur nn (rest batches) cs (inc i))))
+          nn))))
 
-  (feedforward n' [25 25] afs)
-  (Math/sqrt (* 25 25 2))
+  trained
+  ;=>
+  [[{:w [0.28459766357219707 -0.8972086503760817], :b 2.0569986343246742}
+    {:w [0.5367864811762303 0.8871985064565989], :b -1.6308754842701076}
+    {:w [-0.30067246001906367 0.4056438249132086], :b -0.3331176425381601}
+    {:w [-0.523824312608255 0.39037746924663036], :b 0.5525418472714239}
+    {:w [-0.8834413854486687 0.31381794475027713], :b -0.44209945297973124}
+    {:w [1.1564972920608083 0.14549104163805004], :b 0.03906909754786255}]
+   [{:w [0.34552525110127885
+         0.4468619424247271
+         0.567966490765736
+         0.4477685973264638
+         0.3552773347980915
+         0.5582183677023008],
+     :b 0.5395549686005215}]]
 
+  (activation (feedforward trained [25 25] afs)) ;=> 35.36
+  (Math/sqrt (* 25 25 2)) ;=> 35.35
+
+  (activation (feedforward trained [15 35] afs)) ;=> 37.87
+  (Math/sqrt (+ (* 15 15) (* 35 35))) ;=> 38.07
+
+  (activation (feedforward trained [35 35] afs)) ;=> 49.629
+  (Math/sqrt (* 35 35 2)) ;=> 49.497
+
+  (activation (feedforward trained [12.5 21.7] afs)) ;=> 49.629
+  (Math/sqrt (+ (* 12.5 12.5) (* 21.7 21.7))) ;=> 38.07
   )

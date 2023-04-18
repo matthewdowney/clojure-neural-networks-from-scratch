@@ -210,20 +210,20 @@
   "Do backprop with a whole batch of `training-data` at once, and return
   combined weight and bias gradients."
   [network afs afs' training-data]
-  (transduce
-    ; Do backprop on each training example in the batch
-    (map
-      (fn [{:keys [inputs outputs]}]
-        (backprop network inputs outputs afs afs')))
+  (reduce
     ; Sum together all the weight and bias gradients in the batch
-    (completing
-      (fn [[wg bg] backprop-results]
-        (if-not wg
-          ((juxt :wg :bg) backprop-results)
-          [(matrix-op + wg (:wg backprop-results))
-           (matrix-op + bg (:bg backprop-results))])))
-    nil
-    training-data))
+    (fn [[wg bg] backprop-results]
+      (if-not wg
+        ((juxt :wg :bg) backprop-results)
+        [(matrix-op + wg (:wg backprop-results))
+         (matrix-op + bg (:bg backprop-results))]))
+    [nil nil]
+
+    ; Do backprop on each training example in the batch
+    (pmap
+      (fn [{:keys [inputs outputs]}]
+        (backprop network inputs outputs afs afs'))
+      training-data)))
 
 (defn train
   "Train the `network` on the batch of `training-data`, returning a network
@@ -359,40 +359,41 @@
      ; Infinite batches of 10 samples to train on
      :training (drop 10 d)}))
 
+(defn evaluate [nn afs test-data]
+  (transduce
+    (map
+      (fn [{:keys [inputs outputs]}]
+        (mse-cost outputs (activation (feedforward nn inputs afs)))))
+    +
+    0.0
+    test-data))
+
 (comment
   (let [f relu
         f' relu']
     (def afs [f identity])
     (def afs' [f' (constantly 1)]))
 
-  (defn evaluate [nn]
-    (transduce
-      (map
-        (fn [{:keys [inputs outputs]}]
-          (mse-cost outputs (activation (feedforward nn inputs afs)))))
-      +
-      0.0
-      (:test training-data)))
-
   (def trained
-    (let [eta 4e-5
-          s 6]
-      (println "* * *")
-      (println "ETA" eta "Size" s)
-      (println "* * *")
-      (loop [nn (network [2 s 1])
-             batches (:training training-data)
-             cs []
-             i 0]
-        (if (and (< i 100000) (not (.isInterrupted (Thread/currentThread))))
-          (let [batch (first batches)
-                nn (train nn afs afs' batch eta)]
-            (if (zero? (mod (inc i) 1000))
-              (let [c (evaluate nn)]
-                (println "Epoch" i "cost:" c)
-                (recur nn (rest batches) (conj cs c) (inc i)))
-              (recur nn (rest batches) cs (inc i))))
-          nn))))
+    (time
+      (let [eta 4e-5
+            s 6]
+        (println "* * *")
+        (println "ETA" eta "Size" s)
+        (println "* * *")
+        (loop [nn (network [2 s 1])
+               batches (:training training-data)
+               cs []
+               i 0]
+          (if (and (< i 10000) (not (.isInterrupted (Thread/currentThread))))
+            (let [batch (first batches)
+                  nn (train nn afs afs' batch eta)]
+              (if (zero? (mod (inc i) 1000))
+                (let [c (evaluate nn afs (:test training-data))]
+                  #_(println "Epoch" i "cost:" c)
+                  (recur nn (rest batches) (conj cs c) (inc i)))
+                (recur nn (rest batches) cs (inc i))))
+            nn)))))
 
   trained
   ;=>

@@ -72,53 +72,74 @@
 (defn tanh  [z] (Math/tanh z))
 (defn tanh' [z] (- 1 (Math/pow (Math/tanh z) 2)))
 
+(defn layer
+  "Create a map representing a layer of neurons.
+
+  Also stores an activation function and its derivative."
+  ([neurons]
+   (layer neurons #'relu #'relu'))
+  ([neurons activation-fn activation-fn']
+   {:neurons neurons
+    :af activation-fn
+    :af' activation-fn'}))
+
+(defn init-neurons
+  "Create a vector of `out` neurons with randomized weights and biases, each
+  taking `in` inputs.
+
+  Pass an instance of `java.util.Random` as :random to get deterministic
+  behavior."
+  [& {:keys [in out random]}]
+  (let [random (or random (Random.))
+        rand (fn [] (.nextGaussian ^Random random))
+        neuron (fn [inputs] {:w (vec (repeatedly inputs rand)) :b (rand)})]
+    (vec (repeatedly out (fn [] (neuron in))))))
+
 (defn network
-  "Create a network with (deterministically) randomized weights and biases.
+  "Create a network with (deterministically) randomized weights and biases,
+  shaped `[layer]`.
 
   For `sizes` [2 3 1], the network has two layers and takes 2 input values."
-  [sizes]
-  (let [r (Random. 0)
-        rand (fn [] (.nextGaussian r))
-        neuron (fn [inputs] {:w (vec (repeatedly inputs rand)) :b (rand)})]
+  [sizes & {:keys [af af'] :or {af #'relu af' #'relu'}}]
+  (let [r (Random. 0)]
     (mapv
-      ; Each neuron has as many weights as the previous layer has neurons
-      (fn [[inputs size]] (vec (repeatedly size (fn [] (neuron inputs)))))
+      (fn [[inputs outputs]]
+        (layer (init-neurons :in inputs :out outputs :random r) af af'))
       (partition 2 1 sizes))))
 
 (defn feedforward-layer
   "Activate each neuron in the `layer` with the given `inputs` and activation
-  function `afn`."
-  [layer inputs afn]
-  (mapv
-    (fn [neuron]
-      (let [z (reduce + (:b neuron) (map * (:w neuron) inputs))
-            a (afn z)]
-        (assoc neuron :z z :a a)))
-    layer))
+  function."
+  [{:keys [af neurons] :as layer} inputs]
+  (assoc layer :neurons
+    (mapv
+      (fn [neuron]
+        (let [z (reduce + (:b neuron) (map * (:w neuron) inputs))
+              a (af z)]
+          (assoc neuron :z z :a a)))
+      neurons)))
 
 (defn feedforward
   "Activate each layer in the network in turn, returning a modified network.
 
-  Takes a series of activation functions `afs` (one per layer).
-
-  The return network is shaped [layer], each layer is shaped [neuron], and each
-  neuron has an activation value :a and a weighted input value :z."
-  [network inputs afs]
+  The return network is shaped [layer], each layer is {:neurons [neuron]},
+  and each neuron has an activation value :a and a weighted input value :z."
+  [network inputs]
   (loop [idx 0
          inputs inputs
          network network]
     (if (< idx (count network))
-      (let [layer (feedforward-layer (nth network idx) inputs (nth afs idx))]
+      (let [layer (feedforward-layer (nth network idx) inputs)]
         (recur
           (inc idx)
-          (mapv :a layer)
+          (mapv :a (:neurons layer))
           (assoc network idx layer)))
       network)))
 
 (defn activation
   "Return the activation of the final layer in the network."
   [network]
-  (mapv :a (peek network)))
+  (mapv :a (:neurons (peek network))))
 
 ; For backprop, I'll use :bg and :wg for bias gradient and weight gradient
 ; (typically these are written ∇b and ∇w, or nabla-b and nabla-w). I'm favoring
@@ -127,39 +148,39 @@
 ; Each neuron changes its own weights, but only *contributes* to desired bias
 ; changes in the previous layer (its desired bias change is summed with the
 ; suggestions from other neurons at the same layer).
-(defn backprop-neuron [neuron error prv-layer prv-layer-af']
+(defn backprop-neuron [neuron error {prv-neurons :neurons prv-af' :af'}]
   (assoc neuron
     ; From this neuron's perspective, the activations of the previous layer's
     ; neurons would have to change in this direction.
     :bg (mapv
-          (fn [w z] (* w error (prv-layer-af' z)))
-          (:w neuron) (map :z prv-layer))
+          (fn [w z] (* w error (prv-af' z)))
+          (:w neuron) (map :z prv-neurons))
 
     ; Change this neuron's weights in the direction of the error. E.g. if this
     ; neuron's activation needs to increase, increase to a greater degree the
     ; weights corresponding to *more active* neurons in the previous layer.
-    :wg (mapv #(* (:a %) error) prv-layer)))
+    :wg (mapv #(* (:a %) error) prv-neurons)))
 
 (defn backprop-layer-error [layer]
   ; If the neurons in the previous layer are [n0, n1, ..n], then
   ; this shape is [[n0', n1', ..n'], [n0'', n1'', ..n''], ...], with
   ; each top level vector representing the contribution from each neuron
   ; in *this* layer to deciding the error for the previous layer.
-  (let [per-neuron-perspective (map :bg layer)]
+  (let [per-neuron-perspective (map :bg (:neurons layer))]
 
     ; So define the error for each neuron in the previous layer as the sum of
     ; this layer's per-neuron assessments. I.e. sum each of the columns to get
     ; [(+ n0' n0'' ...) etc].
     (apply mapv + per-neuron-perspective)))
 
-(defn network-output-error [network outputs afs']
-  (let [activation-fn-derivative (peek afs')
-        layer (peek network)]
+(defn network-output-error [network outputs]
+  (let [layer (peek network)
+        activation-fn-derivative (:af' layer)]
     (mapv
       (fn [neuron output]
         (* (- (:a neuron) output)
            (activation-fn-derivative (:z neuron))))
-      layer outputs)))
+      (:neurons layer) outputs)))
 
 (defn backprop
   "Feed the `inputs` through the `network`, compute the error versus the
@@ -176,25 +197,27 @@
   The nesting is a tad confusing. The top level vector corresponds to the
   layers, and then the next level to the neurons in each layer. There are
   multiple weights per neuron, hence the triple nesting."
-  [network inputs outputs afs afs']
-  (let [network (feedforward network inputs afs)
-        input-layer (map (fn [a] {:a a}) inputs)]
+  [network inputs outputs]
+  (let [network (feedforward network inputs)
+        input-layer (layer
+                      (mapv (fn [a] {:a a}) inputs)
+                      ; activation function for the input layer is f(x) = x
+                      identity (constantly 1))]
     (loop [idx (dec (count network))
            network network
-           error (list (network-output-error network outputs afs'))]
+           error (list (network-output-error network outputs))]
       (if (>= idx 0)
         (let [pl (nth network (dec idx) input-layer)
-              ; activation function for the input layer is f(x) = x
-              af' (nth afs' (dec idx) (constantly 1))
-              layer (mapv #(backprop-neuron %1 %2 pl af')
-                      (nth network idx)
-                      (first error))]
+              layer (nth network idx)
+              layer (update layer :neurons
+                      (fn [ns]
+                        (mapv #(backprop-neuron %1 %2 pl) ns (first error))))]
           (recur
             (dec idx)
             (assoc network idx layer)
             (cons (backprop-layer-error layer) error)))
         {:bg (vec (rest error))
-         :wg (mapv (partial mapv :wg) network)}))))
+         :wg (mapv (comp (partial mapv :wg) :neurons) network)}))))
 
 ; Helper for element-wise matrix operations
 (defn matrix-op [f a b]
@@ -209,7 +232,7 @@
 (defn backprop-batch
   "Do backprop with a whole batch of `training-data` at once, and return
   combined weight and bias gradients."
-  [network afs afs' training-data]
+  [network training-data]
   (reduce
     ; Sum together all the weight and bias gradients in the batch
     (fn [[wg bg] backprop-results]
@@ -218,11 +241,9 @@
         [(matrix-op + wg (:wg backprop-results))
          (matrix-op + bg (:bg backprop-results))]))
     [nil nil]
-
-    ; Do backprop on each training example in the batch
-    (pmap
+    (pmap ; Do backprop on each training example in the batch
       (fn [{:keys [inputs outputs]}]
-        (backprop network inputs outputs afs afs'))
+        (backprop network inputs outputs))
       training-data)))
 
 (defn train
@@ -230,16 +251,17 @@
   with updated weights and biases.
 
   The `training-data` is shaped [{:inputs [x] :outputs [y]} ...]."
-  [network afs afs' training-data learning-rate]
-  (let [[wg bg] (backprop-batch network afs afs' training-data)
+  [network training-data learning-rate]
+  (let [[wg bg] (backprop-batch network training-data)
         coef (/ learning-rate (count training-data))]
     (vec
-      (for [[layer wg bg] (map vector network wg bg)]
-        (vec
-          (for [[{:keys [w b] :as neuron} wg bg] (map vector layer wg bg)]
-            (let [weights (mapv (fn [w wg] (- w (* wg coef))) w wg)
-                  bias (- b (* bg coef))]
-              (assoc neuron :w weights :b bias))))))))
+      (for [[{:keys [neurons] :as layer} wg bg] (map vector network wg bg)]
+        (assoc layer :neurons
+          (vec
+            (for [[{:keys [w b] :as neuron} wg bg] (map vector neurons wg bg)]
+              (let [weights (mapv (fn [w wg] (- w (* wg coef))) w wg)
+                    bias (- b (* bg coef))]
+                (assoc neuron :w weights :b bias)))))))))
 
 ^:rct/test
 (comment
@@ -260,24 +282,26 @@
      [[-0.20515826]]])
 
   ; Network with the weights and biases taken from the Python library
-  (def nn
+  (defn create-nn [af af']
     (vec
       (for [[lws lbs] (map vector weights biases)]
-        (vec
-          (for [[nws [nb]] (map vector lws lbs)]
-            {:w nws
-             :b nb})))))
+        (layer
+          (vec
+            (for [[nws [nb]] (map vector lws lbs)]
+              {:w nws
+               :b nb}))
+          af af'))))
 
-  ; Helper for building vectors of activation functions
-  (defn fns [f] (vec (repeat 3 f)))
+  ; Test with relu-ish
+  (def nn (create-nn #'relu (constantly 1)))
 
   ; Test feedforward result with ReLU
-  (->> (feedforward nn [3 4] (fns relu)) peek (mapv :a))
+  (activation (feedforward nn [3 4]))
   ;=> [0.711451179800545]
 
   ; Test backprop result with ReLU (ish, I cheated a bit on the derivative to
   ; get results with fewer zeros -- doesn't affect testing for consistency)
-  (backprop nn [3 4] [5] (fns relu) (fns (constantly 1)))
+  (backprop nn [3 4] [5])
   ;=>>
   {:bg [[-13.320990808641826 -0.0531463596480507 -9.090103139068606]
         [-5.276161644216386 -5.156464687149098 1.661069976942607 1.296440101855551]
@@ -291,12 +315,14 @@
          [0.0 0.0 0.5000191212342855]]
         [[-0.5974954256335997 -4.333898954159115 -0.0 -6.666037594022326]]]}
 
+  (def nn' (create-nn #'sigmoid #'sigmoid'))
+
   ; Test feedforward result with σ
-  (->> (feedforward nn [3 4] (fns sigmoid)) peek (mapv :a))
+  (activation (feedforward nn' [3 4]))
   ;=> [0.7385495823882188]
 
   ; Test backprop result with σ
-  (backprop nn [3 4] [5] (fns sigmoid) (fns sigmoid'))
+  (backprop nn' [3 4] [5])
   ;=>
   {:bg [[-0.04805483794290462 0.003308456819531235 -0.07565334396648868]
         [-0.24708450430178128 -0.16241027810037614 0.07909991388045877 0.03940968041967344]
@@ -317,11 +343,12 @@
 
   ; The weight and bias updates are the same after 1000 batches of training as
   ; in the Python version
-  (reduce
-    (fn [nn td]
-      (train nn (fns sigmoid) (fns sigmoid') td 0.001))
-    nn
-    (repeat 1000 training-data))
+  (mapv :neurons
+    (reduce
+      (fn [nn td]
+        (train nn td 0.001))
+      nn'
+      (repeat 1000 training-data)))
   ;=>>
   [[{:w [0.42990755526687285 -0.7074824450899123], :b 0.1738170096432151}
     {:w [-2.5556609160978114 0.6501218304459673], :b 1.4534478365437804}
@@ -343,36 +370,33 @@
     0.0
     (map vector expected-outputs actual-outputs)))
 
-(def training-data
-  (let [r (Random. 0)
-        d (->> (repeatedly
-                 (fn []
-                   (let [x (.nextInt r 100)
-                         y (.nextInt r 100)]
-                     {:inputs [x y]
-                      :outputs [(Math/sqrt (+ (* x x) (* y y)))]})))
-               (partition 10)
-               (map vec))]
-    ; One sample of 100 to evaluate the performance on, not included in the
-    ; training sample
-    {:test (vec (mapcat identity (take 10 d)))
-     ; Infinite batches of 10 samples to train on
-     :training (drop 10 d)}))
-
-(defn evaluate [nn afs test-data]
+(defn evaluate [nn test-data]
   (transduce
     (map
       (fn [{:keys [inputs outputs]}]
-        (mse-cost outputs (activation (feedforward nn inputs afs)))))
+        (mse-cost outputs (activation (feedforward nn inputs)))))
     +
     0.0
     test-data))
 
 (comment
-  (let [f relu
-        f' relu']
-    (def afs [f identity])
-    (def afs' [f' (constantly 1)]))
+  ;; E.g. train a small network to approximate √(x² + y²) with a few epochs of
+  ;; stochastic gradient descent
+  (def training-data
+    (let [r (Random. 0)
+          d (->> (repeatedly
+                   (fn []
+                     (let [x (.nextInt r 100)
+                           y (.nextInt r 100)]
+                       {:inputs [x y]
+                        :outputs [(Math/sqrt (+ (* x x) (* y y)))]})))
+                 (partition 10)
+                 (map vec))]
+      ; One sample of 100 to evaluate the performance on, not included in the
+      ; training sample
+      {:test (vec (mapcat identity (take 10 d)))
+       ; Infinite batches of 10 samples to train on
+       :training (drop 10 d)}))
 
   (def trained
     (time
@@ -387,39 +411,20 @@
                i 0]
           (if (and (< i 10000) (not (.isInterrupted (Thread/currentThread))))
             (let [batch (first batches)
-                  nn (train nn afs afs' batch eta)]
+                  nn (train nn batch eta)]
               (if (zero? (mod (inc i) 1000))
-                (let [c (evaluate nn afs (:test training-data))]
-                  #_(println "Epoch" i "cost:" c)
+                (let [c (evaluate nn (:test training-data))]
+                  (println "Epoch" i "cost:" c)
                   (recur nn (rest batches) (conj cs c) (inc i)))
                 (recur nn (rest batches) cs (inc i))))
             nn)))))
 
-  trained
-  ;=>
-  [[{:w [0.28459766357219707 -0.8972086503760817], :b 2.0569986343246742}
-    {:w [0.5367864811762303 0.8871985064565989], :b -1.6308754842701076}
-    {:w [-0.30067246001906367 0.4056438249132086], :b -0.3331176425381601}
-    {:w [-0.523824312608255 0.39037746924663036], :b 0.5525418472714239}
-    {:w [-0.8834413854486687 0.31381794475027713], :b -0.44209945297973124}
-    {:w [1.1564972920608083 0.14549104163805004], :b 0.03906909754786255}]
-   [{:w [0.34552525110127885
-         0.4468619424247271
-         0.567966490765736
-         0.4477685973264638
-         0.3552773347980915
-         0.5582183677023008],
-     :b 0.5395549686005215}]]
+  (activation (feedforward trained [25 25]))
+  (Math/sqrt (* 25 25 2))
 
-  (activation (feedforward trained [25 25] afs)) ;=> 35.36
-  (Math/sqrt (* 25 25 2)) ;=> 35.35
+  (activation (feedforward trained [35 35]))
+  (Math/sqrt (* 35 35 2))
 
-  (activation (feedforward trained [15 35] afs)) ;=> 37.87
-  (Math/sqrt (+ (* 15 15) (* 35 35))) ;=> 38.07
-
-  (activation (feedforward trained [35 35] afs)) ;=> 49.629
-  (Math/sqrt (* 35 35 2)) ;=> 49.497
-
-  (activation (feedforward trained [12.5 21.7] afs)) ;=> 49.629
-  (Math/sqrt (+ (* 12.5 12.5) (* 21.7 21.7))) ;=> 38.07
+  (activation (feedforward trained [12.5 21.7]))
+  (Math/sqrt (+ (* 12.5 12.5) (* 21.7 21.7)))
   )

@@ -184,8 +184,6 @@
   expected `outputs`, and step backwards through the network, estimating
   directional changes to the weights and biases of each layer.
 
-  Takes a series of activation functions `afs` and their derivatives `afs'`.
-
   Returns a map containing the weight and bias gradients (∇w and ∇b), shaped
 
      {:wg [[[weight-change]]]

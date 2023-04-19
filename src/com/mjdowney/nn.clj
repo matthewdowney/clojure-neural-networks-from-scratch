@@ -1,5 +1,3 @@
-;; TODO: Create a separate ns for the MNIST data set and see if this is fast
-;;       enough to get reasonably close
 (ns com.mjdowney.nn
   (:import (java.util Random)))
 

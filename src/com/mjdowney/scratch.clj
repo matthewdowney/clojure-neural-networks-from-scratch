@@ -2,6 +2,8 @@
   (:require [libpython-clj2.python :as py]
             [libpython-clj2.require :refer [require-python]]))
 
+(set! *warn-on-reflection* true)
+
 (do
   (py/initialize!)
   (require-python '[numpy :as np]))
@@ -44,4 +46,32 @@
           (inc idx)))
       [zs activations])))
 
-(forward weights biases (np/array [[3] [4]]))
+(defn cost-derivative [output-activations y]
+  (np/subtract output-activations y))
+
+(defn ? [v idx] (if (>= idx 0) (nth v idx) (? v (+ (count v) idx))))
+
+(defn backward [weights biases x y]
+  (let [[zs as] (forward weights biases x)
+        n-layers (inc (count weights))]
+    (loop [delta (np/multiply
+                   (cost-derivative (peek as) y)
+                   (sigmoid' (peek zs)))
+           nabla-b (list delta)
+           nabla-w (list (np/dot delta (np/transpose (? as -2))))
+           idx 2]
+      (if (< idx n-layers)
+        (let [z (? zs (- idx))
+              sp (sigmoid' z)
+              delta (np/multiply
+                      (np/dot
+                        (np/transpose (? weights (+ (- idx) 1)))
+                        delta)
+                      sp)
+              w (np/dot delta (np/transpose (? as (- (- idx) 1))))]
+          (recur delta (cons delta nabla-b) (cons w nabla-w) (inc idx)))
+        [nabla-b nabla-w]))))
+
+(comment
+  (backward weights biases (np/array [[3] [4]]) (np/array [[5]]))
+  )

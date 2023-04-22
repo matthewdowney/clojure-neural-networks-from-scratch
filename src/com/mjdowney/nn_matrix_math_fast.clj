@@ -1,8 +1,10 @@
 (ns com.mjdowney.nn-matrix-math-fast
-  (:require [uncomplicate.neanderthal.core :as ncore]
-            [uncomplicate.neanderthal.native :as nnative]
+  (:require [clojure.java.io :as io]
             [uncomplicate.fluokitten.core :as fk]
-            [uncomplicate.neanderthal.random :as nrand]))
+            [uncomplicate.neanderthal.core :as ncore]
+            [uncomplicate.neanderthal.native :as nnative]
+            [uncomplicate.neanderthal.random :as nrand])
+  (:import (java.util.zip GZIPInputStream)))
 
 (set! *warn-on-reflection* true)
 
@@ -58,8 +60,15 @@
      [[0.12167502], [0.44386323], [0.33367433], [1.49407907]],
      [[-0.20515826]]]))
 
+(def test-inputs (matrix [[3] [4]]))
+
 ^:rct/test
 (comment
+
+  (time
+    (dotimes [_ 1000000]
+      (feedforward test-weights test-biases test-inputs)))
+
   ; Test that this matrix math version of feedforward is equivalent
   (let [[zs activations] (feedforward test-weights test-biases (matrix [[3] [4]]))]
     (seq (peek activations)))
@@ -139,18 +148,19 @@
         [[-0.8228609192012974]]]})
 
 (defn backprop-batch [weights biases training-data]
-  (reduce
-    ; Sum together all the weight and bias gradients in the batch
-    (fn [[wg bg] backprop-results]
-      (if-not wg
-        ((juxt :wg :bg) backprop-results)
-        [(mapv add wg (:wg backprop-results))
-         (mapv add bg (:bg backprop-results))]))
-    [nil nil]
-    (pmap ; Do backprop on each training example in the batch
+  (transduce
+    (map ; Do backprop on each training example in the batch
       (fn [{:keys [inputs outputs]}]
-        (backprop weights biases inputs outputs))
-      training-data)))
+        (backprop weights biases inputs outputs)))
+    ; Sum together all the weight and bias gradients in the batch
+    (completing
+      (fn [[wg bg] backprop-results]
+        (if-not wg
+          ((juxt :wg :bg) backprop-results)
+          [(mapv add wg (:wg backprop-results))
+           (mapv add bg (:bg backprop-results))])))
+    [nil nil]
+    training-data))
 
 (defrecord Network [weights biases])
 
@@ -204,11 +214,11 @@
 
 (defn evaluate [{:keys [weights biases]} test-data]
   (reduce + 0
-    (pmap
-      (fn [[inputs expected]]
+    (map
+      (fn [{:keys [inputs outputs]}]
         (let [[_ as] (feedforward weights biases inputs)
               output-vector (ncore/col (peek as) 0)]
-          (if (= (ncore/iamax output-vector) expected)
+          (if (= (ncore/iamax output-vector) outputs)
             1
             0)))
       test-data)))
@@ -217,72 +227,73 @@
   (let [start (System/currentTimeMillis)]
     (transduce
       (comp
-        (map (fn [[i o]] {:inputs i :outputs o}))
         (partition-all 10)
         (map-indexed vector))
       (completing
         (fn [n [idx batch]]
           (let [n (train n batch eta)]
-
-            (when (zero? (mod idx 10))
+            (when (zero? (mod idx 100))
               (println
                 (format "Batch %s: accuracy %s / %s (t = %.3fs)"
                   idx
                   (evaluate n (take 100 (shuffle test-data)))
                   100
                   (/ (- (System/currentTimeMillis) start) 1000.0))))
-
             n)))
       network
       (shuffle training-data))))
 
-(defn input-matrix
-  "Convert a 784-element input vector to a 784x1 matrix."
-  [input-vector]
-  (nnative/dge 784 1 input-vector))
+(defn read-training-data-line [line]
+  (let [[inputs outputs] (read-string line)
+        inm (nnative/dge 784 1)
+        om (nnative/dge 10 1)]
+    (dotimes [i 784]
+      (ncore/entry! inm i 0 (nth inputs i)))
+    (dotimes [i 10]
+      (ncore/entry! om i 0 (nth outputs i)))
+    {:inputs inm
+     :outputs om}))
 
-(defn output-matrix
-  "Convert a 10-element output vector to a 10x1 matrix."
-  [output-vector]
-  (nnative/dge 10 1 output-vector))
+(defn read-test-data-line [line]
+  (let [[inputs outputs] (read-string line)
+        inm (nnative/dge 784 1)]
+    (dotimes [i 784]
+      (ncore/entry! inm i 0 (nth inputs i)))
+    {:inputs inm
+     :outputs outputs}))
 
 (comment
   (def mnist-training-data
-    (mapv
-      (fn [[i o]]
-        [(input-matrix i) (output-matrix o)])
-      (com.mjdowney.mnist/load-data "resources/mnist/training_data.edn.gz")))
+    (let [path "resources/mnist/training_data.edn.gz"]
+      (with-open [rdr (io/reader (GZIPInputStream. (io/input-stream path)))]
+        (->> (line-seq rdr)
+             (pmap read-training-data-line)
+             (into [])))))
 
   (def mnist-test-data
-    (mapv
-      (fn [[i o]]
-        [(input-matrix i) o])
-      (com.mjdowney.mnist/load-data "resources/mnist/test_data.edn.gz")))
+    (let [path "resources/mnist/test_data.edn.gz"]
+      (with-open [rdr (io/reader (GZIPInputStream. (io/input-stream path)))]
+        (->> (line-seq rdr)
+             (pmap read-test-data-line)
+             (into [])))))
 
   ; Construct a network with 784 input neurons (for the 28 x 28 image pixels),
   ; a hidden layer of 30 neurons, and 10 output neurons (for the 10 digits).
-  (def weights
-    [(nrand/rand-normal! 0 1 (nnative/dge 30 784))
-     (nrand/rand-normal! 0 1 (nnative/dge 10 30))])
-
-  (def biases
-    [(nrand/rand-normal! 0 1 (nnative/dge 30 1))
-     (nrand/rand-normal! 0 1 (nnative/dge 10 1))])
-
-  (def network (->Network weights biases))
+  (def network
+    (->Network
+      [(nrand/rand-normal! 0 1 (nnative/dge 30 784))
+       (nrand/rand-normal! 0 1 (nnative/dge 10 30))]
+      [(nrand/rand-normal! 0 1 (nnative/dge 30 1))
+       (nrand/rand-normal! 0 1 (nnative/dge 10 1))]))
 
   ; Initial accuracy is approximately random
   (evaluate network (take 100 (shuffle mnist-test-data))) ;=> 8
 
-  (backprop
-    (:weights network)
-    (:biases network)
-    (first (first mnist-training-data))
-    (second (first mnist-training-data)))
-
   ; Train the network for one epoch -- this takes a long time because it goes
   ; through the full training data set!
-  (def trained (sgd network mnist-training-data mnist-test-data 3.0))
+  (def trained
+    (time
+      (sgd trained mnist-training-data mnist-test-data 3.0)))
   ; Batch 0: accuracy 4 / 100 (t = 0.156s)
   ; Batch 10: accuracy 16 / 100 (t = 0.914s)
   ; Batch 20: accuracy 13 / 100 (t = 1.665s)

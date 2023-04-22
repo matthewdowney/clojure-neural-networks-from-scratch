@@ -1,7 +1,20 @@
 {:paths ["src"]
- :deps  {org.clojure/clojure {:mvn/version "1.11.1"}
-         com.taoensso/timbre {:mvn/version "6.0.2"} ; logging
-         com.taoensso/tufte  {:mvn/version "2.4.5"} ; profiling
+ :deps  {org.clojure/clojure      {:mvn/version "1.11.1"}
+         com.taoensso/timbre      {:mvn/version "6.0.2"}    ; logging
+         com.taoensso/tufte       {:mvn/version "2.4.5"}    ; profiling
+         uncomplicate/neanderthal {:mvn/version "0.43.0"}   ; matrix math
+         clj-python/libpython-clj {:mvn/version "2.024"}
+
+         ;;Optional. If bytedeco is not present, a system-wide MKL is used.
+         #_#_org.bytedeco/mkl-platform {:mvn/version "2022.2-1.5.8"}
 
          ; literate testing
-         io.github.matthewdowney/rich-comment-tests {:git/tag "v1.0.2" :git/sha "4501366"}}}
+         com.mjdowney/rich-comment-tests
+         {:git/tag "v1.0.3"
+          :git/sha "a8711e9"
+          :git/url "git@github.com:matthewdowney/rich-comment-tests.git"}}
+ :jvm-opts ["-Dclojure.compiler.direct-linking=true"
+            "-XX:MaxDirectMemorySize=16g"
+            "-XX:+UseLargePages"
+            "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"]}

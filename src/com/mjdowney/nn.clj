@@ -338,12 +338,15 @@
 
   ; The weight and bias updates are the same after 1000 batches of training as
   ; in the Python version
-  (mapv :neurons
-    (reduce
-      (fn [nn td]
-        (train nn td 0.001))
-      nn'
-      (repeat 1000 training-data)))
+  (def trained
+    (time
+      (reduce
+        (fn [nn td]
+          (train nn td 0.001))
+        nn'
+        (repeat 1000 training-data))))
+
+  (mapv :neurons trained)
   ;=>>
   [[{:w [0.42990755526687285 -0.7074824450899123], :b 0.1738170096432151}
     {:w [-2.5556609160978114 0.6501218304459673], :b 1.4534478365437804}
@@ -354,6 +357,8 @@
     {:w [-1.9811838175395835 -0.3479784850885607 0.15137788018024356], :b 1.4868532932245218}]
    [{:w [1.5501161477687693 1.637175464757474 -0.17588049984672005 0.1149529758537042], :b 0.31271354155253683}]]
 
+  (activation (feedforward trained [3 4]))
+  ;=> [0.9439931067001217]
   )
 
 (defn mse-cost [expected-outputs actual-outputs]

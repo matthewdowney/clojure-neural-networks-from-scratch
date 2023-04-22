@@ -1,13 +1,13 @@
 (ns com.mjdowney.scratch
   (:require [libpython-clj2.python :as py]
-            [libpython-clj2.require :refer [require-python]])
-  (:import (clojure.lang PersistentQueue)))
+            [libpython-clj2.require :refer [require-python]]))
 
 (set! *warn-on-reflection* true)
 
 (do
   (py/initialize!)
   (require-python '[numpy :as np]))
+
 
 (def weights
   (mapv np/array
@@ -49,29 +49,24 @@
 
 (defn cost-derivative [output-activations y] (np/subtract output-activations y))
 
-(defn ? [v idx] (if (>= idx 0) (nth v idx) (? v (+ (count v) idx))))
-
-(comment
-  (def f (forward weights biases (np/array [[3] [4]])))
-  (def zs (first f))
-  (def as (second f))
-
-  ; Given some output error
-  ; For each layer
-  ;   Compute a change in weights
-  ;           (based on the previous layer's activation)
-  ;   If not the first layer
-  ;     Compute a change in the previous layer's biases
-  ;           (based on this layer's weights)
-  ;
-  ;     Or, in other words
-  ;
-  ;     Compute the previous layer's error
-  ;   Else if the first layer
-  ;     Return weight and bias gradients
-  (let [activation-for-layer (fn [l] (nth as (inc l)))]
+; Given some output error
+; For each layer
+;   Compute a change in weights
+;           (based on the previous layer's activation)
+;   If not the first layer
+;     Compute a change in the previous layer's biases
+;           (based on this layer's weights)
+;
+;     Or, in other words
+;
+;     Compute the previous layer's error
+;   Else if the first layer
+;     Return weight and bias gradients
+(defn backward [weights biases inputs expected]
+  (let [[zs as] (forward weights biases inputs)
+        activation-for-layer (fn [l] (nth as (inc l)))]
     (loop [error (np/multiply ; Given some output error
-                   (np/subtract (peek as) (np/array [[5]]))
+                   (np/subtract (peek as) expected)
                    (sigmoid' (peek zs)))
            wg (list)
            bg (list error)
@@ -95,76 +90,33 @@
           ; Else if the first layer
           ; Return weight and bias gradients
           {:wg (vec wg)
-           :bg (vec bg)}))))
-  )
+           :bg (vec bg)})))))
 
+
+(defn round5 [x]
+  (clojure.walk/postwalk
+    (fn [n]
+      (if (number? n)
+        (/ (long (* n 1e5)) 1.0e5)
+        n))
+    x))
+
+^:rct/test
 (comment
-  (do
-    (def f (forward weights biases (np/array [[3] [4]])))
-    (def zs (first f))
-    (def as (second f))
-
-    (def delta
-      (np/multiply
-        (cost-derivative (peek as) (np/array [[5]]))
-        (sigmoid' (peek zs))))
-
-    (println :delta)
-    (clojure.pprint/pprint delta)
-
-    (def nabla-b (list delta))
-    (def nabla-w (list (np/dot delta (np/transpose (? as -2)))))
-
-    (def i 2)
-
-    (let [z (? zs (- i))
-          sp (sigmoid' z)
-          delta (np/multiply
-                  (np/dot
-                    (np/transpose (? weights (+ (- i) 1)))
-                    delta)
-                  sp)
-          w (np/dot delta (np/transpose (? as (- (- i) 1))))]
-      {:delta delta
-       :w     w}))
-
-  (def i 3)
-  (let [z (? zs (- i))
-        sp (sigmoid' z)]
-    #p (alter-var-root #'delta
-         (fn [d]
-           (np/multiply
-             (np/dot
-               (np/transpose (? weights (+ (- i) 1)))
-               d)
-             sp)))
-    (alter-var-root #'nabla-b #(cons delta %))
-    (let [w #p (np/dot delta (np/transpose (? as #p (- (- i) 1))))]
-      (alter-var-root #'nabla-w #(cons w %))))
-  nabla-b
-  nabla-w
-
-  )
-
-(defn backward [weights biases x y]
-  (let [[zs as] (forward weights biases x)
-        n-layers (inc (count weights))]
-    (loop [delta (np/multiply
-                   (cost-derivative (peek as) y)
-                   (sigmoid' (peek zs)))
-           nabla-b (list delta)
-           nabla-w (list (np/dot delta (np/transpose (? as -2))))
-           idx 2]
-      (if (< idx n-layers)
-        (let [z (? zs (- idx))
-              sp (sigmoid' z)
-              delta (np/multiply
-                      (np/dot
-                        (np/transpose (? weights (+ (- idx) 1)))
-                        delta)
-                      sp)
-              w (np/dot delta (np/transpose (? as (- (- idx) 1))))]
-          (recur delta (cons delta nabla-b) (cons w nabla-w) (inc idx)))
-        [(vec nabla-b) (vec nabla-w)]))))
-
-(backward weights biases (np/array [[3] [4]]) (np/array [[5]]))
+  (-> (backward weights biases (np/array [[3] [4]]) (np/array [[5]]))
+      pr-str
+      read-string
+      round5)
+  ;=>>
+  (round5
+    {:bg [[[-0.04805483794290462] [0.003308456819531235] [-0.07565334396648868]]
+          [[-0.24708450430178128] [-0.16241027810037614] [0.07909991388045877] [0.03940968041967344]]
+          [[-0.8228609192012977]]],
+     :wg [[[-0.14416451382871387 -0.19221935177161847]
+           [0.009925370458593704 0.01323382727812494]
+           [-0.22696003189946604 -0.3026133758659547]]
+          [[-0.021846114139705986 -0.006634547316343827 -0.14707552467992419]
+           [-0.014359595244017212 -0.004360931810606212 -0.09667371465695357]
+           [0.0069936629654559785 0.0021239378116470666 0.04708373505242684]
+           [0.00348442885599166 0.0010582022948188068 0.023458368793990856]]
+          [[-0.4748052863127182 -0.6525277264159819 -0.3763548135364772 -0.6604340885279468]]]}))

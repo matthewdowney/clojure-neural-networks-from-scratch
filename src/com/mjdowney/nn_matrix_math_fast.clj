@@ -1,3 +1,4 @@
+; apt-get install intel-mkl
 (ns com.mjdowney.nn-matrix-math-fast
   (:require [clojure.java.io :as io]
             [uncomplicate.fluokitten.core :as fk]
@@ -10,11 +11,17 @@
 
 ;;; Matrix operations
 
-(defn transpose "Transpose a matrix" [m] (ncore/trans m))
+(defn transpose
+  "Transpose a matrix"
+  [m]
+  (ncore/trans m))
 
-(defn matmul "Multiply two matrices." [m1 m2] (ncore/mm m1 m2))
+(defn matmul
+  "Multiply two matrices."
+  [m1 m2]
+  (ncore/mm m1 m2))
 
-(defn ewise
+(defn element-wise
   "Build a function to apply `op` element-wise with two vectors or matrices,
   or against a single vector or matrix."
   [op]
@@ -26,8 +33,8 @@
 ;;; Now the updated feedforward
 
 ; The sigmoid (σ) activation function and its derivative
-(def sigmoid  (ewise (fn [z] (/ 1.0 (+ 1.0 (Math/exp (- z)))))))
-(def sigmoid' (ewise (fn [z] (* (sigmoid z) (- 1 (sigmoid z))))))
+(def sigmoid  (element-wise (fn [z] (/ 1.0 (+ 1.0 (Math/exp (- z)))))))
+(def sigmoid' (element-wise (fn [z] (* (sigmoid z) (- 1 (sigmoid z))))))
 
 (defn feedforward [weights biases inputs]
   (loop [activations [inputs]
@@ -41,6 +48,7 @@
         (recur (conj activations a) (conj zs z) (inc idx)))
       [zs activations])))
 
+;; TODO: Improve the test vectors
 ; Same weights and biases from the tests in the previous namespace
 (defn matrix [vecs] (ncore/trans (nnative/dge vecs)))
 (defonce test-weights
@@ -88,8 +96,8 @@
 (defn backprop [weights biases inputs expected]
   (let [[zs as] (feedforward weights biases inputs)
         activation-for-layer (fn [l] (nth as (inc l)))
-        multiply (ewise *)
-        subtract (ewise -)]
+        multiply (element-wise *)
+        subtract (element-wise -)]
     (loop [delta (multiply ; Given some output delta
                    (subtract (peek as) expected)
                    (sigmoid' (peek zs)))
@@ -164,6 +172,13 @@
 
 (defrecord Network [weights biases])
 
+(defn scale-and-add
+  "Scale `m1` by the scalar `coef` and add it to `m2`.
+
+  I.e. (+ (* m1 coef) + m2)"
+  [coef m1 m2]
+  (ncore/axpy coef m1 m2))
+
 (defn train
   "Train the network `weights` and `biases` on the batch of `training-data`,
   returning updated weights and biases.
@@ -173,8 +188,8 @@
   (let [[wg bg] (backprop-batch weights biases training-data)
         coef (- (/ learning-rate (count training-data)))]
     (->Network
-      (mapv #(ncore/axpy coef %1 %2) wg weights)
-      (mapv #(ncore/axpy coef %1 %2) bg biases))))
+      (mapv #(scale-and-add coef %1 %2) wg weights)
+      (mapv #(scale-and-add coef %1 %2) bg biases))))
 
 ^:rct/test
 (comment
@@ -232,7 +247,7 @@
       (completing
         (fn [n [idx batch]]
           (let [n (train n batch eta)]
-            (when (zero? (mod idx 100))
+            (when (zero? (mod (inc idx) 1000))
               (println
                 (format "Batch %s: accuracy %s / %s (t = %.3fs)"
                   idx
@@ -245,8 +260,8 @@
 
 (defn read-training-data-line [line]
   (let [[inputs outputs] (read-string line)
-        inm (nnative/dge 784 1)
-        om (nnative/dge 10 1)]
+        inm (nnative/fge 784 1)
+        om (nnative/fge 10 1)]
     (dotimes [i 784]
       (ncore/entry! inm i 0 (nth inputs i)))
     (dotimes [i 10]
@@ -256,7 +271,7 @@
 
 (defn read-test-data-line [line]
   (let [[inputs outputs] (read-string line)
-        inm (nnative/dge 784 1)]
+        inm (nnative/fge 784 1)]
     (dotimes [i 784]
       (ncore/entry! inm i 0 (nth inputs i)))
     {:inputs inm
@@ -281,28 +296,36 @@
   ; a hidden layer of 30 neurons, and 10 output neurons (for the 10 digits).
   (def network
     (->Network
-      [(nrand/rand-normal! 0 1 (nnative/dge 30 784))
-       (nrand/rand-normal! 0 1 (nnative/dge 10 30))]
-      [(nrand/rand-normal! 0 1 (nnative/dge 30 1))
-       (nrand/rand-normal! 0 1 (nnative/dge 10 1))]))
+      [(nrand/rand-normal! 0 (/ 1 (Math/sqrt 724)) (nnative/fge 30 784))
+       (nrand/rand-normal! 0 (/ 1 (Math/sqrt 30)) (nnative/fge 10 30))]
+      [(nrand/rand-normal! 0 1 (nnative/fge 30 1))
+       (nrand/rand-normal! 0 1 (nnative/fge 10 1))]))
 
   ; Initial accuracy is approximately random
   (evaluate network (take 100 (shuffle mnist-test-data))) ;=> 8
 
-  ; Train the network for one epoch -- this takes a long time because it goes
-  ; through the full training data set!
+  ; Train the network for one epoch. This is approximately 100x faster than the
+  ; version without using Neanderthal's native bindings (and slightly faster
+  ; than the Python + NumPy version).
   (def trained
     (time
-      (sgd trained mnist-training-data mnist-test-data 3.0)))
-  ; Batch 0: accuracy 4 / 100 (t = 0.156s)
-  ; Batch 10: accuracy 16 / 100 (t = 0.914s)
-  ; Batch 20: accuracy 13 / 100 (t = 1.665s)
-  ; ...
-  ; Batch 4970: accuracy 89 / 100 (t = 405.182s)
-  ; Batch 4980: accuracy 90 / 100 (t = 405.926s)
-  ; Batch 4990: accuracy 91 / 100 (t = 406.677s)
+      (sgd network mnist-training-data mnist-test-data 3.0)))
+  ; Batch 999: accuracy 74 / 100 (t = 1.322s)
+  ; Batch 1999: accuracy 74 / 100 (t = 2.267s)
+  ; Batch 2999: accuracy 80 / 100 (t = 3.203s)
+  ; Batch 3999: accuracy 90 / 100 (t = 4.138s)
+  ; Batch 4999: accuracy 87 / 100 (t = 5.244s)
+  ; "Elapsed time: 3462.76129 msecs"
 
-  ; After one epoch of training (consisting of many mini batches),
-  ; the accuracy on the test data is > 90%. That's pretty cool!
-  (evaluate trained mnist-test-data) ;=> 9109
+  ; After one epoch the accuracy on the test data is much higher...
+  (evaluate trained mnist-test-data) ;=> 8996
+
+  ; And you can just keep evaling this over an over again to train for
+  ; additional epochs
+  (dotimes [_ 10]
+    (def trained
+      (time
+        (sgd trained mnist-training-data mnist-test-data 0.5))))
+
+  (evaluate trained mnist-test-data) ;=> 9437
   )

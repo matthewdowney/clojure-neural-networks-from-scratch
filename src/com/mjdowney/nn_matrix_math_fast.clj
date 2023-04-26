@@ -30,6 +30,15 @@
 ; define add separately since there is a special helper for it
 (defn add [m1 m2] (ncore/xpy m1 m2))
 
+(defn mvec
+  "Turn a Neanderthal matrix into a Clojure vector of vectors."
+  [matrix]
+  (vec
+    (for [i (range (ncore/mrows matrix))]
+      (vec
+        (for [j (range (ncore/ncols matrix))]
+          (ncore/entry matrix i j))))))
+
 ;;; Now the updated feedforward
 
 ; The sigmoid (σ) activation function and its derivative
@@ -48,37 +57,49 @@
         (recur (conj activations a) (conj zs z) (inc idx)))
       [zs activations])))
 
-;; TODO: Improve the test vectors
 ; Same weights and biases from the tests in the previous namespace
-(defn matrix [vecs] (ncore/trans (nnative/dge vecs)))
-(defonce test-weights
-  (mapv matrix
-    [[[0.3130677, -0.85409574],
-      [-2.55298982, 0.6536186],
-      [0.8644362, -0.74216502]],
-     [[2.26975462, -1.45436567, 0.04575852],
-      [-0.18718385, 1.53277921, 1.46935877],
-      [0.15494743, 0.37816252, -0.88778575],
-      [-1.98079647, -0.34791215, 0.15634897]],
-     [[1.23029068, 1.20237985, -0.38732682, -0.30230275]]]))
+(def test-weights
+  [(nnative/dge 3 2
+     [ 0.3130677 -0.85409574
+      -2.55298982 0.6536186
+      0.8644362 -0.74216502]
+     {:layout :row})
+   (nnative/dge 4 3
+     [ 2.26975462 -1.45436567  0.04575852
+      -0.18718385  1.53277921  1.46935877
+      0.15494743  0.37816252 -0.88778575
+      -1.98079647 -0.34791215  0.15634897]
+     {:layout :row})
+   (nnative/dge 1 4
+     [ 1.23029068  1.20237985 -0.38732682 -0.30230275]
+     {:layout :row})])
 
-(defonce test-biases
-  (mapv matrix
-    [[[0.14404357], [1.45427351], [0.76103773]],
-     [[0.12167502], [0.44386323], [0.33367433], [1.49407907]],
-     [[-0.20515826]]]))
+(def test-biases
+  [(nnative/dge 3 1
+     [0.14404357
+      1.45427351
+      0.76103773]
+     {:layout :row})
+   (nnative/dge 4 1
+     [0.12167502
+      0.44386323
+      0.33367433
+      1.49407907]
+     {:layout :row})
+   (nnative/dge 1 1
+     [-0.20515826]
+     {:layout :row})])
 
-(def test-inputs (matrix [[3] [4]]))
+(def test-inputs
+  (nnative/dge 2 1
+    [3
+     4]
+    {:layout :row}))
 
 ^:rct/test
 (comment
-
-  (time
-    (dotimes [_ 1000000]
-      (feedforward test-weights test-biases test-inputs)))
-
   ; Test that this matrix math version of feedforward is equivalent
-  (let [[zs activations] (feedforward test-weights test-biases (matrix [[3] [4]]))]
+  (let [[zs activations] (feedforward test-weights test-biases test-inputs)]
     (seq (peek activations)))
   ;=> ((0.7385495823882189))
   )
@@ -128,20 +149,11 @@
 
 ^:rct/test
 (comment
-  (def wg (:wg *1))
-  wg
-
   (-> (backprop test-weights test-biases
         (nnative/dge 2 1 [3 4] {:layout :col})
         (nnative/dge 1 1 [5] {:layout :col}))
-      :wg
-      count)
-
-  (-> (backprop test-weights test-biases
-        (nnative/dge 2 1 [3 4] {:layout :col})
-        (nnative/dge 1 1 [5] {:layout :col}))
-      (update :wg #(map seq %))
-      (update :bg #(map seq %)))
+      (update :wg #(mapv mvec %))
+      (update :bg #(mapv mvec %)))
   ;=>>
   {:wg [[[-0.14416451382871381 -0.19221935177161842]
          [0.0099253704585937 0.013233827278124935]
@@ -194,9 +206,12 @@
 ^:rct/test
 (comment
   (def training-data
-    [{:inputs (matrix [[3] [4]]) :outputs (matrix [[5]])}
-     {:inputs (matrix [[4] [5]]) :outputs (matrix [[6]])}
-     {:inputs (matrix [[5] [6]]) :outputs (matrix [[7]])}])
+    [{:inputs (nnative/dge 2 1 [3 4])
+      :outputs (nnative/dge 1 1 [5])}
+     {:inputs (nnative/dge 2 1 [4 5])
+      :outputs (nnative/dge 1 1 [6])}
+     {:inputs (nnative/dge 2 1 [5 6])
+      :outputs (nnative/dge 1 1 [7])}])
 
   (def trained
     (time
@@ -205,19 +220,19 @@
         (->Network test-weights test-biases)
         (repeat 1000 training-data))))
 
-  (update-vals trained #(map seq %))
+  (update-vals trained #(mapv mvec %))
   ;=>
-  {:weights '[((0.4299075552668728 -0.7074824450899123)
-               (-2.5556609160978114 0.6501218304459673)
-               (0.9951770978037526 -0.5788488977828417))
-              ((2.2849577686829683 -1.4529221333741635 0.1769262089626654)
-               (-0.17831988032714072 1.5336579052709052 1.5452033216566965)
-               (0.15201595703752568 0.37785523163584306 -0.9144365699181696)
-               (-1.9811838175395835 -0.3479784850885607 0.15137788018024356))
-              ((1.5501161477687693 1.637175464757474 -0.17588049984672005 0.11495297585370423))],
-   :biases '[((0.1738170096432151) (1.4534478365437804) (0.7936129544134036))
-             ((0.2896804960563322) (0.5415332672690717) (0.29871588626034246) (1.4868532932245218))
-             ((0.31271354155253683))]}
+  {:weights [[[0.4299075552668728 -0.7074824450899123]
+              [-2.5556609160978114 0.6501218304459673]
+              [0.9951770978037526 -0.5788488977828417]]
+             [[2.2849577686829683 -1.4529221333741635 0.1769262089626654]
+              [-0.17831988032714072 1.5336579052709052 1.5452033216566965]
+              [0.15201595703752568 0.37785523163584306 -0.9144365699181696]
+              [-1.9811838175395835 -0.3479784850885607 0.15137788018024356]]
+             [[1.5501161477687693 1.637175464757474 -0.17588049984672005 0.11495297585370423]]],
+   :biases [[[0.1738170096432151] [1.4534478365437804] [0.7936129544134036]]
+            [[0.2896804960563322] [0.5415332672690717] [0.29871588626034246] [1.4868532932245218]]
+            [[0.31271354155253683]]]}
 
   (let [[_ as] (feedforward (:weights trained) (:biases trained)
                  (matrix [[3] [4]]))]

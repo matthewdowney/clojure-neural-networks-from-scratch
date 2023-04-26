@@ -235,7 +235,7 @@
             [[0.31271354155253683]]]}
 
   (let [[_ as] (feedforward (:weights trained) (:biases trained)
-                 (matrix [[3] [4]]))]
+                 test-inputs)]
     (seq (peek as)))
   ;=> ((0.9439931067001217))
   )
@@ -275,8 +275,8 @@
 
 (defn read-training-data-line [line]
   (let [[inputs outputs] (read-string line)
-        inm (nnative/fge 784 1)
-        om (nnative/fge 10 1)]
+        inm (nnative/dge 784 1)
+        om (nnative/dge 10 1)]
     (dotimes [i 784]
       (ncore/entry! inm i 0 (nth inputs i)))
     (dotimes [i 10]
@@ -286,7 +286,7 @@
 
 (defn read-test-data-line [line]
   (let [[inputs outputs] (read-string line)
-        inm (nnative/fge 784 1)]
+        inm (nnative/dge 784 1)]
     (dotimes [i 784]
       (ncore/entry! inm i 0 (nth inputs i)))
     {:inputs inm
@@ -311,10 +311,10 @@
   ; a hidden layer of 30 neurons, and 10 output neurons (for the 10 digits).
   (def network
     (->Network
-      [(nrand/rand-normal! 0 (/ 1 (Math/sqrt 724)) (nnative/fge 30 784))
-       (nrand/rand-normal! 0 (/ 1 (Math/sqrt 30)) (nnative/fge 10 30))]
-      [(nrand/rand-normal! 0 1 (nnative/fge 30 1))
-       (nrand/rand-normal! 0 1 (nnative/fge 10 1))]))
+      [(nrand/rand-normal! 0 (/ 1 (Math/sqrt 784)) (nnative/dge 30 784))
+       (nrand/rand-normal! 0 (/ 1 (Math/sqrt 30)) (nnative/dge 10 30))]
+      [(nrand/rand-normal! 0 1 (nnative/dge 30 1))
+       (nrand/rand-normal! 0 1 (nnative/dge 10 1))]))
 
   ; Initial accuracy is approximately random
   (evaluate network (take 100 (shuffle mnist-test-data))) ;=> 8
@@ -325,15 +325,15 @@
   (def trained
     (time
       (sgd network mnist-training-data mnist-test-data 3.0)))
-  ; Batch 999: accuracy 74 / 100 (t = 1.322s)
-  ; Batch 1999: accuracy 74 / 100 (t = 2.267s)
-  ; Batch 2999: accuracy 80 / 100 (t = 3.203s)
-  ; Batch 3999: accuracy 90 / 100 (t = 4.138s)
-  ; Batch 4999: accuracy 87 / 100 (t = 5.244s)
-  ; "Elapsed time: 3462.76129 msecs"
+  ; Batch 999: accuracy 93 / 100 (t = 0.946s)
+  ; Batch 1999: accuracy 92 / 100 (t = 2.029s)
+  ; Batch 2999: accuracy 86 / 100 (t = 3.002s)
+  ; Batch 3999: accuracy 94 / 100 (t = 4.137s)
+  ; Batch 4999: accuracy 93 / 100 (t = 5.231s)
+  ; "Elapsed time: 5231.049051 msecs"
 
   ; After one epoch the accuracy on the test data is much higher...
-  (evaluate trained mnist-test-data) ;=> 8996
+  (evaluate trained mnist-test-data) ;=> 9399
 
   ; And you can just keep evaling this over an over again to train for
   ; additional epochs
@@ -342,5 +342,5 @@
       (time
         (sgd trained mnist-training-data mnist-test-data 0.5))))
 
-  (evaluate trained mnist-test-data) ;=> 9437
+  (evaluate trained mnist-test-data) ;=> 9566
   )

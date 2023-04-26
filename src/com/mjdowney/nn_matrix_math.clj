@@ -5,9 +5,15 @@
 
 ;;; Matrix operations
 
-(defn dot "Dot prodict of vectors" [v1 v2] (reduce + (map * v1 v2)))
+(defn dot
+  "Dot product of vectors"
+  [v1 v2]
+  (reduce + (map * v1 v2)))
 
-(defn transpose "Transpose a matrix" [m] (apply mapv vector m))
+(defn transpose
+  "Transpose a matrix"
+  [m]
+  (apply mapv vector m))
 
 (defn matmul
   "Multiply two matrices."

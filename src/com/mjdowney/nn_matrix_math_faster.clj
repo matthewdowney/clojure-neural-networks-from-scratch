@@ -64,6 +64,9 @@
           (ncore/entry matrix i j))))))
 
 ;;; Now the updated feedforward
+(let [idx+val (map-indexed vector ns)]
+  ; the idx in [idx v] at which v is greatest
+  (first (apply max-key second idx+val)))
 
 ; The sigmoid (σ) activation function and its derivative
 (def sigmoid  (element-wise (fn [z] (/ 1.0 (+ 1.0 (Math/exp (- z)))))))
@@ -118,6 +121,50 @@
    (nnative/dge 1 1
      [-0.20515826]
      {:layout :row})])
+
+#_(def layers [{:weights w0 :biases b0} {:weights w1 :biases b1}])
+
+; The sigmoid (σ) function to squash the output of the neurons onto [0, 1]
+(defn sigmoid1 [n] (/ 1.0 (+ 1.0 (Math/exp (- n)))))
+
+(defn feedforward1 [inputs {:keys [weights biases] :as _layer}]
+  (for [[b ws :as _neuron] (map vector biases weights)]
+    (let [weighted-input (reduce + (map * inputs ws))]
+      (sigmoid (+ b weighted-input)))))
+
+(defn argmax [numbers]
+  (let [idx+val (map-indexed vector numbers)]
+    ; the idx in [idx v] at which v is greatest
+    (first (apply max-key second idx+val))))
+
+(defn matrix->vecs [m]
+  (vec
+    (for [row (range (ncore/mrows m))]
+      (vec
+        (for [col (range (ncore/ncols m))]
+          (ncore/entry m row col))))))
+
+(comment
+  (def layers
+    (let [{:keys [weights biases]} trained]
+      (for [[weights biases] (map vector weights biases)]
+        {:weights (matrix->vecs weights)
+         :biases (mapv first (matrix->vecs biases))})))
+
+  (spit "wbs.txt" "")
+  (doseq [i [0 1 2]
+          k [:weights :biases]]
+    (let [numbers (get (nth layers i) k)]
+      (spit "wbs.txt"
+        (prn-str
+          (list 'def (symbol (str (first (name k)) i)) numbers))
+        :append true)))
+
+  (-> (repeat 784 1.0)
+      (feedforward1 (first layers))
+      (feedforward1 (second layers))
+      #_(feedforward1 (last layers)))
+  )
 
 ^:rct/test
 (comment
@@ -248,6 +295,14 @@
 
 ;;; MNIST stuff
 
+(defn evaluate' [{:keys [weights biases]} test-data]
+  (map
+    (fn [[inputs expected]]
+      (let [[_ as] (feedforward weights biases inputs)
+            output-vector (ncore/col (peek as) 0)]
+        (seq output-vector)))
+    test-data))
+
 (defn evaluate [{:keys [weights biases]} test-data]
   (reduce + 0
     (map
@@ -313,13 +368,27 @@
              (pmap read-test-data-line)
              (into [])))))
 
+  (spit "w.txt" (pr-str (list 'def 'inputs (vec (first (seq (ffirst mnist-test-data)))))))
+  (-> mnist-test-data first second)
+  (evaluate' network [(first mnist-test-data)])
+  (partition-all 2)
+
+  (evaluate' network (list [(nnative/dge 784 1 (repeat 1.0)) 0]))
+
+  (->> inputs
+       (partition-all 28)
+       transpose
+       (mapcat identity))
+
   ; Construct a network with 784 input neurons (for the 28 x 28 image pixels),
   ; a hidden layer of 30 neurons, and 10 output neurons (for the 10 digits).
   (def network
     (->Network
-      [(nrand/rand-normal! 0 (/ 1 (Math/sqrt 784)) (nnative/dge 30 784))
-       (nrand/rand-normal! 0 (/ 1 (Math/sqrt 30)) (nnative/dge 10 30))]
-      [(nrand/rand-normal! 0 1 (nnative/dge 30 1))
+      [(nrand/rand-normal! 0 (/ 1 (Math/sqrt 784)) (nnative/dge 64 784))
+       (nrand/rand-normal! 0 (/ 1 (Math/sqrt 64)) (nnative/dge 32 64))
+       (nrand/rand-normal! 0 (/ 1 (Math/sqrt 32)) (nnative/dge 10 32))]
+      [(nrand/rand-normal! 0 1 (nnative/dge 64 1))
+       (nrand/rand-normal! 0 1 (nnative/dge 32 1))
        (nrand/rand-normal! 0 1 (nnative/dge 10 1))]))
 
   ; Initial accuracy is approximately random
@@ -346,7 +415,11 @@
   (dotimes [_ 10]
     (def trained
       (time
-        (sgd trained mnist-training-data mnist-test-data 0.5))))
+        (sgd trained mnist-training-data mnist-test-data 0.05))))
 
   (evaluate trained mnist-test-data) ;=> 9604
+
+  (spit "w.txt" (prn-str (list 'def 'w0 (mapv vec (seq (first (:biases trained)))))))
+  (mapv vec (seq (first (:biases trained))))
+  (prn-str *1)
   )

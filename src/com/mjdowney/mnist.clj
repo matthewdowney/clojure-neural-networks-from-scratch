@@ -1,4 +1,4 @@
-(ns com.mjdowney.mnist
+(ns com.mjdowney.mnist ;; TODO: Move into nn namespace
   (:require [clojure.java.io :as io]
             [com.mjdowney.nn :as nn])
   (:import (java.util.zip GZIPInputStream)))

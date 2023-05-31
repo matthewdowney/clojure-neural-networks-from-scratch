@@ -3,6 +3,4 @@
         :extra-deps {io.github.matthewdowney/rich-comment-tests
                      {:git/tag "v1.0.2" :git/sha "4501366"}}
         :requires ([com.mjdowney.rich-comment-tests.test-runner :as rct])
-        :task (rct/run-tests-in-file-tree! {:dirs #{"src"}})}
-  clerk {:doc "Start a Clerk notebook server for the micrograd.clj file."
-         :task (shell "clj -X com.mjdowney.clerk/serve!")}}}
+        :task (rct/run-tests-in-file-tree! {:dirs #{"src"}})}}}

@@ -5,7 +5,7 @@
 
 ;;; I. Neurons
 ;;; ===
-;;; A neuron is a function shaped [input] -> scalar.
+;;; A 'neuron' is a function shaped [input] -> scalar.
 ;;;
 ;;; To 'activate' the neuron, multiply the inputs by the neuron's weights (w),
 ;;; sum the results with its bias (b) to get the weighted input (z), and apply
@@ -38,8 +38,7 @@
 ;;; inputs.
 ;;;
 ;;; This computation ('feedforward') is easy and fast, just sum and multiply.
-;;; Notice that this structure can be represented as a matrix multiplication,
-;;; so it goes even faster with modern SIMD instructions.
+;;; Notice that this can be represented as a matrix multiplication.
 ;;;
 ;;; The hard part is picking the right weights and biases.
 
@@ -138,6 +137,7 @@
   [network]
   (mapv :a (:neurons (peek network))))
 
+;; TODO: Link YouTube video here
 ; For backprop, I'll use :bg and :wg for bias gradient and weight gradient
 ; (typically these are written ∇b and ∇w, or nabla-b and nabla-w). I'm favoring
 ; short field names for REPL ergonomics.
@@ -258,7 +258,7 @@
                     bias (- b (* bg coef))]
                 (assoc neuron :w weights :b bias)))))))))
 
-^:rct/test
+^:rct/test ;; TODO: Move this test down, and add more explanatory comments
 (comment
   ; Test that feedforward and backprop match Python library sample
   (def weights

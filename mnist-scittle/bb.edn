@@ -1,0 +1,12 @@
+{:deps {org.babashka/http-server {:mvn/version "0.1.11"}
+        org.babashka/cli         {:mvn/version "0.2.23"}}
+ :tasks
+ {:requires ([babashka.cli :as cli])
+  :init     (def cli-opts
+              (cli/parse-opts *command-line-args* {:coerce {:port :int}}))
+  serve     {:doc      "Serve static assets"
+             :requires ([babashka.http-server :as server])
+             :task     (server/exec (merge {:port 8080 :dir "."} cli-opts))}
+  prn       {:task (clojure "-X clojure.core/prn" cli-opts)}
+  -dev      {:depends [serve prn]}
+  dev       {:task (run '-dev {:parallel true})}}}

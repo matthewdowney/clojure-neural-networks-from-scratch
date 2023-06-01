@@ -8,11 +8,14 @@
 <body>
 
 <h2>Draw on Canvas</h2>
-<canvas id="digitCanvas" width="500" height="500" style="border:1px solid #000000;"></canvas>
-<button id="getResult">Get Result</button>
-<button id="clearCanvas">Clear</button>
-<div id="results"></div>
-<br>
+<div id="canvas-container" style="display: flex">
+    <canvas id="digitCanvas" width="500" height="500" style="border:1px solid #000000;"></canvas>
+    <div id="results" style="height: 100px; width: 500px; display: inline-flex; flex-wrap: wrap;"></div>
+</div>
+<div>
+    <button id="getResult">Get Result</button>
+    <button id="clearCanvas">Clear</button>
+</div>
 
 </body>
 </html>

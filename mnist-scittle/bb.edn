@@ -9,4 +9,11 @@
              :task     (server/exec (merge {:port 8080 :dir "."} cli-opts))}
   prn       {:task (clojure "-X clojure.core/prn" cli-opts)}
   -dev      {:depends [serve prn]}
-  dev       {:task (run '-dev {:parallel true})}}}
+  dev       {:task (run '-dev {:parallel true})}
+  release   {:requires ([clojure.java.io :as io])
+             :task (let [path "/home/matthew/matthewdowney.github.io/static/js/mnist"]
+                     (doseq [f ["canvas.js" "mnist.cljs"]]
+                       (let [to (io/file path f)]
+                         (io/make-parents to)
+                         (io/copy (io/file f) (io/file path f))
+                         (println "Copied to" (str to)))))}}}

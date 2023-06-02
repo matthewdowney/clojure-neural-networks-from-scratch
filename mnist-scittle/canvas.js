@@ -1,6 +1,5 @@
 // Canvas variables
-const WIDTH = 500;
-const HEIGHT = 500;
+let WIDTH, HEIGHT;
 const PIXEL_COUNT = 784;
 
 let canvas, ctx;
@@ -123,6 +122,8 @@ function crop() {
 const init = () => {
     // initialize canvas
     canvas = document.getElementById("digitCanvas");
+    WIDTH = canvas.width;
+    HEIGHT = canvas.height;
     ctx = canvas.getContext("2d");
     canvas.addEventListener("contextmenu", e => {e.preventDefault(); return false;});
     canvas.addEventListener("mousedown", mouseDown);

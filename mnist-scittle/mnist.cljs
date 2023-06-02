@@ -80,3 +80,7 @@
 
 (.addEventListener (ele "getResult") "click" (fn [_e] (process!)))
 (.addEventListener (ele "clearCanvas") "click" #(.doReset js/window))
+
+(props! (ele "loading-text") {:style {:display :none}})
+(props! (ele "canvas-container") {:style {:display :flex}})
+(props! (ele "canvas-buttons") {:style {:display :block}})

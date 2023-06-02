@@ -1,5 +1,11 @@
-; apt-get install intel-mkl
-(ns com.mjdowney.nn-matrix-math-faster
+(ns com.mjdowney.nn-04-matrix-math-faster
+  "Improves on the previous version by batching — running multiple samples
+  through the network at the same time during training.
+
+  Performance improves to ~1 second per epoch.
+
+  Also includes code to serialize the weights and biases for use in
+  ./mnist-scittle"
   (:require [clojure.java.io :as io]
             [uncomplicate.fluokitten.core :as fk]
             [uncomplicate.neanderthal.core :as ncore]
@@ -64,9 +70,6 @@
           (ncore/entry matrix i j))))))
 
 ;;; Now the updated feedforward
-(let [idx+val (map-indexed vector ns)]
-  ; the idx in [idx v] at which v is greatest
-  (first (apply max-key second idx+val)))
 
 ; The sigmoid (σ) activation function and its derivative
 (def sigmoid  (element-wise (fn [z] (/ 1.0 (+ 1.0 (Math/exp (- z)))))))
@@ -94,17 +97,17 @@
   [(nnative/dge 3 2
      [ 0.3130677 -0.85409574
       -2.55298982 0.6536186
-       0.8644362 -0.74216502]
-      {:layout :row})
+      0.8644362 -0.74216502]
+     {:layout :row})
    (nnative/dge 4 3
      [ 2.26975462 -1.45436567  0.04575852
       -0.18718385  1.53277921  1.46935877
-       0.15494743  0.37816252 -0.88778575
+      0.15494743  0.37816252 -0.88778575
       -1.98079647 -0.34791215  0.15634897]
-      {:layout :row})
-    (nnative/dge 1 4
-      [ 1.23029068  1.20237985 -0.38732682 -0.30230275]
-      {:layout :row})])
+     {:layout :row})
+   (nnative/dge 1 4
+     [ 1.23029068  1.20237985 -0.38732682 -0.30230275]
+     {:layout :row})])
 
 (def test-biases
   [(nnative/dge 3 1
@@ -121,50 +124,6 @@
    (nnative/dge 1 1
      [-0.20515826]
      {:layout :row})])
-
-#_(def layers [{:weights w0 :biases b0} {:weights w1 :biases b1}])
-
-; The sigmoid (σ) function to squash the output of the neurons onto [0, 1]
-(defn sigmoid1 [n] (/ 1.0 (+ 1.0 (Math/exp (- n)))))
-
-(defn feedforward1 [inputs {:keys [weights biases] :as _layer}]
-  (for [[b ws :as _neuron] (map vector biases weights)]
-    (let [weighted-input (reduce + (map * inputs ws))]
-      (sigmoid (+ b weighted-input)))))
-
-(defn argmax [numbers]
-  (let [idx+val (map-indexed vector numbers)]
-    ; the idx in [idx v] at which v is greatest
-    (first (apply max-key second idx+val))))
-
-(defn matrix->vecs [m]
-  (vec
-    (for [row (range (ncore/mrows m))]
-      (vec
-        (for [col (range (ncore/ncols m))]
-          (ncore/entry m row col))))))
-
-(comment
-  (def layers
-    (let [{:keys [weights biases]} trained]
-      (for [[weights biases] (map vector weights biases)]
-        {:weights (matrix->vecs weights)
-         :biases (mapv first (matrix->vecs biases))})))
-
-  (spit "wbs.txt" "")
-  (doseq [i [0 1 2]
-          k [:weights :biases]]
-    (let [numbers (get (nth layers i) k)]
-      (spit "wbs.txt"
-        (prn-str
-          (list 'def (symbol (str (first (name k)) i)) numbers))
-        :append true)))
-
-  (-> (repeat 784 1.0)
-      (feedforward1 (first layers))
-      (feedforward1 (second layers))
-      #_(feedforward1 (last layers)))
-  )
 
 ^:rct/test
 (comment
@@ -252,6 +211,16 @@
       (mapv #(scale-and-add coef %1 %2) wg weights)
       (mapv #(scale-and-add coef %1 %2) bg biases))))
 
+(defn serialize!
+  "Serializes a network to a file."
+  [f {:keys [weights biases]}]
+  (spit f "")
+  (letfn [(write! [sym numbers]
+            (spit f (prn-str (list 'def sym numbers)) :append true))]
+    (doseq [[idx weights biases] (map vector (range) weights biases)]
+      (write! (str "w" idx) (mvec weights))
+      (write! (str "b" idx) (mapv first (mvec biases))))))
+
 ^:rct/test
 (comment
   (def training-inputs
@@ -294,14 +263,6 @@
   )
 
 ;;; MNIST stuff
-
-(defn evaluate' [{:keys [weights biases]} test-data]
-  (map
-    (fn [[inputs expected]]
-      (let [[_ as] (feedforward weights biases inputs)
-            output-vector (ncore/col (peek as) 0)]
-        (seq output-vector)))
-    test-data))
 
 (defn evaluate [{:keys [weights biases]} test-data]
   (reduce + 0
@@ -368,44 +329,28 @@
              (pmap read-test-data-line)
              (into [])))))
 
-  (spit "w.txt" (pr-str (list 'def 'inputs (vec (first (seq (ffirst mnist-test-data)))))))
-  (-> mnist-test-data first second)
-  (evaluate' network [(first mnist-test-data)])
-  (partition-all 2)
-
-  (evaluate' network (list [(nnative/dge 784 1 (repeat 1.0)) 0]))
-
-  (->> inputs
-       (partition-all 28)
-       transpose
-       (mapcat identity))
-
   ; Construct a network with 784 input neurons (for the 28 x 28 image pixels),
   ; a hidden layer of 30 neurons, and 10 output neurons (for the 10 digits).
   (def network
     (->Network
-      [(nrand/rand-normal! 0 (/ 1 (Math/sqrt 784)) (nnative/dge 64 784))
-       (nrand/rand-normal! 0 (/ 1 (Math/sqrt 64)) (nnative/dge 32 64))
-       (nrand/rand-normal! 0 (/ 1 (Math/sqrt 32)) (nnative/dge 10 32))]
-      [(nrand/rand-normal! 0 1 (nnative/dge 64 1))
-       (nrand/rand-normal! 0 1 (nnative/dge 32 1))
+      [(nrand/rand-normal! 0 (/ 1 (Math/sqrt 784)) (nnative/dge 30 784))
+       (nrand/rand-normal! 0 (/ 1 (Math/sqrt 30)) (nnative/dge 10 30))]
+      [(nrand/rand-normal! 0 1 (nnative/dge 30 1))
        (nrand/rand-normal! 0 1 (nnative/dge 10 1))]))
 
   ; Initial accuracy is approximately random
   (evaluate network (take 100 (shuffle mnist-test-data))) ;=> 8
 
-  ; Train the network for one epoch. This is approximately 100x faster than the
-  ; version without using Neanderthal's native bindings (and slightly faster
-  ; than the Python + NumPy version).
+  ; Train the network for one epoch.
   (def trained
     (time
       (sgd network mnist-training-data mnist-test-data 3.0)))
-  ; Batch 999: accuracy 88 / 100 (t = 0.326s)
-  ; Batch 1999: accuracy 92 / 100 (t = 0.634s)
-  ; Batch 2999: accuracy 90 / 100 (t = 0.946s)
-  ; Batch 3999: accuracy 94 / 100 (t = 1.247s)
-  ; Batch 4999: accuracy 95 / 100 (t = 1.584s)
-  ; "Elapsed time: 1584.205381 msecs"
+  ; Batch 999: accuracy 94 / 100 (t = 0.188s)
+  ; Batch 1999: accuracy 85 / 100 (t = 0.448s)
+  ; Batch 2999: accuracy 92 / 100 (t = 0.635s)
+  ; Batch 3999: accuracy 93 / 100 (t = 0.839s)
+  ; Batch 4999: accuracy 92 / 100 (t = 1.031s)
+  ; "Elapsed time: 1031.565483 msecs"
 
   ; After one epoch the accuracy on the test data is much higher...
   (evaluate trained mnist-test-data) ;=> 9413
@@ -415,11 +360,10 @@
   (dotimes [_ 10]
     (def trained
       (time
-        (sgd trained mnist-training-data mnist-test-data 0.05))))
+        (sgd trained mnist-training-data mnist-test-data 0.5))))
 
   (evaluate trained mnist-test-data) ;=> 9604
 
-  (spit "w.txt" (prn-str (list 'def 'w0 (mapv vec (seq (first (:biases trained)))))))
-  (mapv vec (seq (first (:biases trained))))
-  (prn-str *1)
+  ; save weights and biases
+  (serialize! "mnist-scittle/wbs.txt" trained)
   )

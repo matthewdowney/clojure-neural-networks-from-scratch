@@ -1,5 +1,9 @@
-(ns com.mjdowney.nn-matrix-math
-  "Like the `nn` namespace, but adjusted to use explicit matrix math.")
+(ns com.mjdowney.nn-02-matrix-math
+  "This second version is just like the first, but it introduces matrix math
+  semantics.
+
+  No speedup yet, because we're still using manual looping, multiplying and
+  summing.")
 
 (set! *warn-on-reflection* true)
 

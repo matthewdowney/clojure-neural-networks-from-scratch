@@ -73,7 +73,7 @@ const draw = () => {
             if (draw) square(i,j,pixels[j*28+i]);
     ctx.strokeStyle = '#999999';
     if (xpos !== -1 && ypos !== -1)
-        ctx.strokeRect(xpos-15,ypos-15,30,30);
+        ctx.strokeRect(xpos-12.5,ypos-12.5,25,25);
     drawOn = false;
 };
 

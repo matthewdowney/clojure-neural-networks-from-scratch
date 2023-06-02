@@ -1,5 +1,15 @@
-; apt-get install intel-mkl
-(ns com.mjdowney.nn-matrix-math-fast
+(ns com.mjdowney.nn-03-matrix-math-fast
+  "This implementation mirrors the semantics of the second version, but uses
+  the Neanderthal library for matrix math.
+
+  NOTE: This requires that Intel MKL be installed[1] (`apt-get install intel-mkl`
+  did it for me).
+
+  Performance greatly improved (400 secs -> 5 secs per epoch) and now comparable
+  to perf in Michael Nielsen's Python + numpy sample code[2].
+
+  [1] https://neanderthal.uncomplicate.org/articles/getting_started.html#the-native-library-used-by-neanderthals-native-engine-optional
+  [2] https://github.com/mnielsen/neural-networks-and-deep-learning"
   (:require [clojure.java.io :as io]
             [uncomplicate.fluokitten.core :as fk]
             [uncomplicate.neanderthal.core :as ncore]

@@ -1,20 +1,18 @@
 {:paths    ["src"]
- :deps     {org.clojure/clojure         {:mvn/version "1.11.1"}
-            com.taoensso/timbre         {:mvn/version "6.0.2"} ; logging
-            com.taoensso/tufte          {:mvn/version "2.4.5"} ; profiling
-            uncomplicate/neanderthal    {:mvn/version "0.43.0"} ; matrix math
-            uncomplicate/deep-diamond   {:mvn/version "0.26.0"}
-            clj-python/libpython-clj    {:mvn/version "2.024"}
+ :deps     {org.clojure/clojure      {:mvn/version "1.11.1"}
+            uncomplicate/neanderthal {:mvn/version "0.43.0"} ; matrix math
+            ; Optional. If bytedeco is not present, a system-wide MKL is used.
+            #_#_org.bytedeco/mkl-platform {:mvn/version "2022.2-1.5.8"}}
+ :aliases  {:dev
+            {:extra-deps
+             {com.mjdowney/rich-comment-tests ; literate testing
+              {:git/tag "v1.0.3"
+               :git/sha "a8711e9"
+               :git/url "git@github.com:matthewdowney/rich-comment-tests.git"}}}
 
-            io.github.nextjournal/clerk {:mvn/version "0.13.842"}
-            com.phronemophobic/clj-graphviz {:mvn/version "0.5.0"}
-
-            ;;Optional. If bytedeco is not present, a system-wide MKL is used.
-            #_#_org.bytedeco/mkl-platform {:mvn/version "2022.2-1.5.8"}
-            com.mjdowney/rich-comment-tests                 ; literate testing
-            {:git/tag "v1.0.3"
-             :git/sha "a8711e9"
-             :git/url "git@github.com:matthewdowney/rich-comment-tests.git"}}
+            :test
+            {:exec-fn com.mjdowney.rich-comment-tests.test-runner/run-tests-in-file-tree!
+             :exec-args {:dirs #{"src"}}}}
 
  :jvm-opts ["-Dclojure.compiler.direct-linking=true"
             "-XX:MaxDirectMemorySize=8g"

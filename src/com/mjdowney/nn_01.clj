@@ -1,4 +1,8 @@
-(ns com.mjdowney.nn
+(ns com.mjdowney.nn-01
+  "This first namespace builds up to a neural network that can learn digit
+  recognition (MNIST), albeit slowly (~400 secs per epoch).
+
+  Test vectors at the bottom of the ns."
   (:import (java.util Random)))
 
 (set! *warn-on-reflection* true)
@@ -137,10 +141,17 @@
   [network]
   (mapv :a (:neurons (peek network))))
 
-;; TODO: Link YouTube video here
-; For backprop, I'll use :bg and :wg for bias gradient and weight gradient
-; (typically these are written ∇b and ∇w, or nabla-b and nabla-w). I'm favoring
-; short field names for REPL ergonomics.
+;;; III. Backpropagation
+;;; ===
+;;; To understand this algorithm, I'd recommend reading Michael Nielsen's
+;;; tutorial through the end of chapter 1[1] and watching the 3Blue1Brown video
+;;; on backprop[2].
+;;  [1] http://neuralnetworksanddeeplearning.com/chap1.html#implementing_our_network_to_classify_digits
+;;; [2] https://www.youtube.com/watch?v=Ilg3gGewQ5U&list=PLZHQObOWTQDNU6R1_67000Dx_ZCJB-3pi&index=3
+
+; I'll use :bg and :wg for bias gradient and weight gradient (typically these
+; are written ∇b and ∇w, or nabla-b and nabla-w). I'm favoring short field names
+; for REPL ergonomics.
 
 ; Each neuron changes its own weights, but only *contributes* to desired bias
 ; changes in the previous layer (its desired bias change is summed with the
@@ -258,7 +269,106 @@
                     bias (- b (* bg coef))]
                 (assoc neuron :w weights :b bias)))))))))
 
-^:rct/test ;; TODO: Move this test down, and add more explanatory comments
+;;; IV. MNIST Digit Recognition
+;;; ===
+;;; This code is actually enough to build a neural network that can recognize
+;;; handwritten digits from the MNIST dataset. It's not very fast, but it works.
+
+(defn load-data
+  "Return a vector of data from the given `path`, which points to a gzipped
+  file where each line is EDN data."
+  [path]
+  (with-open [rdr (clojure.java.io/reader
+                    (java.util.zip.GZIPInputStream.
+                      (clojure.java.io/input-stream path)))]
+    (->> (line-seq rdr)
+         (pmap read-string)
+         (into []))))
+
+; The network is going to have 10 output neurons, and we'll define its guess
+; as the index of the neuron with the highest activation.
+(defn argmax [xs]
+  (loop [idx 1
+         max-idx 0
+         max-val (first xs)]
+    (if (< idx (count xs))
+      (let [val (nth xs idx)]
+        (if (> val max-val)
+          (recur (inc idx) idx val)
+          (recur (inc idx) max-idx max-val)))
+      max-idx)))
+
+; Return the number of correct guesses the network makes on the test data.
+(defn evaluate [network test-data]
+  (reduce + 0
+    (pmap
+      (fn [[inputs expected]]
+        (let [a (activation (feedforward network inputs))]
+          (if (= (argmax a) expected)
+            1
+            0)))
+      test-data)))
+
+; Shuffle the training data and train the network using stochastic gradient
+; descent with some learning rate `eta`.
+(defn sgd [network training-data test-data eta]
+  (let [start (System/currentTimeMillis)]
+    (transduce
+      (comp
+        (map (fn [[i o]] {:inputs i :outputs o}))
+        (partition-all 10)
+        (map-indexed vector))
+      (completing
+        (fn [n [idx batch]]
+          (let [n (train n batch eta)]
+            (when (zero? (mod idx 10))
+              (println
+                (format "Batch %s: accuracy %s / %s (t = %.3fs)"
+                  idx
+                  (evaluate n (take 100 (shuffle test-data)))
+                  100
+                  (/ (- (System/currentTimeMillis) start) 1000.0))))
+            n)))
+      network
+      (shuffle training-data))))
+
+(comment
+  ; Load the training and test data
+  (defonce training-data (load-data "resources/mnist/training_data.edn.gz"))
+  (defonce test-data (load-data "resources/mnist/test_data.edn.gz"))
+
+  ; Construct a network with 784 input neurons (for the 28 x 28 image pixels),
+  ; a hidden layer of 30 neurons, and 10 output neurons (for the 10 digits).
+  (def network (network [784 30 10] :af #'sigmoid :af' #'sigmoid'))
+
+  ; Initial accuracy is approximately random
+  (evaluate network (take 100 (shuffle test-data))) ;=> 8
+
+  ; Train the network for one epoch -- this takes a long time because it goes
+  ; through the full training data set!
+  (def trained (sgd network training-data test-data 3.0))
+  ; Batch 0: accuracy 4 / 100 (t = 0.156s)
+  ; Batch 10: accuracy 16 / 100 (t = 0.914s)
+  ; Batch 20: accuracy 13 / 100 (t = 1.665s)
+  ; ...
+  ; Batch 4970: accuracy 89 / 100 (t = 405.182s)
+  ; Batch 4980: accuracy 90 / 100 (t = 405.926s)
+  ; Batch 4990: accuracy 91 / 100 (t = 406.677s)
+
+  ; After one epoch of training (consisting of many mini batches),
+  ; the accuracy on the test data is > 90%. That's pretty cool!
+  (evaluate trained test-data) ;=> 9109
+
+  )
+
+; Finally, I created some tests using Michael Nielsen's Python library[1].
+; So I created a small NN with the same weights and biases that I'll put here,
+; and trained it on the same data, and then compared the results to make sure
+; that the code in this namespace is algorithmically correct.
+;
+; [1] https://github.com/mnielsen/neural-networks-and-deep-learning
+;
+^:rct/test
 (comment
   ; Test that feedforward and backprop match Python library sample
   (def weights
@@ -331,7 +441,7 @@
          [0.00348442885599166 0.0010582022948188068 0.023458368793990856]]
         [[-0.4748052863127182 -0.6525277264159819 -0.3763548135364772 -0.6604340885279468]]]}
 
-  (def training-data
+  (def td
     [{:inputs [3 4] :outputs [5]}
      {:inputs [4 5] :outputs [6]}
      {:inputs [5 6] :outputs [7]}])
@@ -344,7 +454,7 @@
         (fn [nn td]
           (train nn td 0.001))
         nn'
-        (repeat 1000 training-data))))
+        (repeat 1000 td))))
 
   (mapv :neurons trained)
   ;=>>
@@ -359,72 +469,4 @@
 
   (activation (feedforward trained [3 4]))
   ;=> [0.9439931067001217]
-  )
-
-(defn mse-cost [expected-outputs actual-outputs]
-  (transduce
-    (map (fn [[e a]] (Math/pow (- e a) 2.0)))
-    (fn
-      ([sum x] (+ sum x))
-      ([sum] (/ (Math/sqrt sum) (* (count expected-outputs) 2))))
-    0.0
-    (map vector expected-outputs actual-outputs)))
-
-(defn evaluate [nn test-data]
-  (transduce
-    (map
-      (fn [{:keys [inputs outputs]}]
-        (mse-cost outputs (activation (feedforward nn inputs)))))
-    +
-    0.0
-    test-data))
-
-(comment
-  ;; E.g. train a small network to approximate √(x² + y²) with a few epochs of
-  ;; stochastic gradient descent
-  (def training-data
-    (let [r (Random. 0)
-          d (->> (repeatedly
-                   (fn []
-                     (let [x (.nextInt r 100)
-                           y (.nextInt r 100)]
-                       {:inputs [x y]
-                        :outputs [(Math/sqrt (+ (* x x) (* y y)))]})))
-                 (partition 10)
-                 (map vec))]
-      ; One sample of 100 to evaluate the performance on, not included in the
-      ; training sample
-      {:test (vec (mapcat identity (take 10 d)))
-       ; Infinite batches of 10 samples to train on
-       :training (drop 10 d)}))
-
-  (def trained
-    (time
-      (let [eta 4e-5
-            s 6]
-        (println "* * *")
-        (println "ETA" eta "Size" s)
-        (println "* * *")
-        (loop [nn (network [2 s 1])
-               batches (:training training-data)
-               cs []
-               i 0]
-          (if (and (< i 10000) (not (.isInterrupted (Thread/currentThread))))
-            (let [batch (first batches)
-                  nn (train nn batch eta)]
-              (if (zero? (mod (inc i) 1000))
-                (let [c (evaluate nn (:test training-data))]
-                  (println "Epoch" i "cost:" c)
-                  (recur nn (rest batches) (conj cs c) (inc i)))
-                (recur nn (rest batches) cs (inc i))))
-            nn)))))
-
-  (activation (feedforward trained [25 25]))
-  (Math/sqrt (* 25 25 2))
-
-  (activation (feedforward trained [35 35]))
-  (Math/sqrt (* 35 35 2))
-
-  (activation (feedforward trained [12.5 21.7]))
-  (Math/sqrt (+ (* 12.5 12.5) (* 21.7 21.7)))
   )

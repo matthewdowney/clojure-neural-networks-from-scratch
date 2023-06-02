@@ -27,7 +27,7 @@ network libraries and use them at the REPL during development, especially for
 the backpropagation algorithm.
 
 Browse the files under `src/` to see the [tests inside rich comment blocks](https://github.com/matthewdowney/rich-comment-tests),
-for example [this backpropagation gradient test]().
+for example [this backpropagation gradient test](https://github.com/matthewdowney/clojure-neural-networks-from-scratch/blob/852bf4bb2a9e7a78e10f7b84a4310d00cbb4a71c/src/com/mjdowney/nn_01.clj#L364).
 
 Run tests with `bb test`.
 

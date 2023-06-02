@@ -82,5 +82,5 @@
 (.addEventListener (ele "clearCanvas") "click" #(.doReset js/window))
 
 (props! (ele "loading-text") {:style {:display :none}})
-(props! (ele "canvas-container") {:style {:display :flex}})
+(props! (ele "canvas-container") {:style {:display :flow-root}})
 (props! (ele "canvas-buttons") {:style {:display :block}})

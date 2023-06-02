@@ -118,38 +118,6 @@ function crop() {
     }
 }
 
-// Function to handle touch events
-function touchHandler(e) {
-
-    // Create a mouse event that will mimic the touch event
-    let touch = e.changedTouches[0]; // get the first touch event
-
-    let mouseEvent;
-    switch(e.type) {
-        case "touchstart":
-            mouseEvent = new MouseEvent("mousedown",
-                {
-                    ...touch,
-                    buttons: 1 // Left button down (see https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/buttons)
-                });
-            break;
-        case "touchend":
-            mouseEvent = new MouseEvent("mouseup", {});
-            break;
-        case "touchmove":
-            mouseEvent = new MouseEvent("mousemove", {...touch});
-            break;
-        default:
-            return;
-    }
-
-    // Dispatch the created mouse event
-    canvas.dispatchEvent(mouseEvent);
-
-    // prevent the default scrolling
-    e.preventDefault();
-}
-
 // Initialization function
 const init = () => {
     // initialize canvas
@@ -162,12 +130,6 @@ const init = () => {
     canvas.addEventListener("mouseup", mouseUpOrOut);
     canvas.addEventListener("mouseout", mouseUpOrOut);
     canvas.addEventListener("mousemove", mouseMove);
-
-    // Add touch event listeners
-    canvas.addEventListener("touchstart", touchHandler);
-    canvas.addEventListener("touchend", touchHandler);
-    canvas.addEventListener("touchcancel", touchHandler);
-    canvas.addEventListener("touchmove", touchHandler);
 
     // continually redraw canvases
     setInterval(draw, 25);
